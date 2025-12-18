@@ -39,14 +39,15 @@ Reference:
 
 
 class RiemannSolver:
-    def __init__(self, rho_L, vx_L, P_L, rho_R, vx_R, P_R, gamma, t, Lbox=20, N=1024):
+    def __init__(self, rho_L, vx_L, P_L, rho_R, vx_R, P_R, gamma, t):
         """
         Initialize Riemann Solver
         """
 
         self.set_state(rho_L, vx_L, P_L, rho_R, vx_R, P_R, gamma, t)
 
-        # domain [-Lbox/2,Lbox/2], shock initially at x=0
+        Lbox = 20.0  # domain [-Lbox/2,Lbox/2], shock initially at x=0
+        N = 1024  # resolution
 
         self.x = np.linspace(-Lbox / 2, Lbox / 2, N)
         self.rho = np.zeros(N)

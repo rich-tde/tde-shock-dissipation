@@ -44,7 +44,8 @@ class Units:
             time_unit=self.tscale,  # time chosen so that G=1
             registry=reg,
         )
-        self.rich_system = rus
+        self.system = rus
+        self.registry = reg
 
         self._unit_per_field = {
             "Box": self.lscale,
@@ -123,3 +124,35 @@ class Units:
 
 # Singleton instance for convenience
 units = Units()
+
+
+def to_rich_units(qty):
+    """
+    Convert a unyt_array or unyt_quantity object to using the custom RICH unit
+    registry. This does NOT change the unit, only the registry, such that 
+    `qty.in_base('rich')` is allowed afterwards. 
+    
+    :param qty: unyt_array or unyt_quantity object.
+
+    :returns: a unyt_array or unyt_quantity object but in RICH unit registry. 
+    """
+    
+    if isinstance(qty, u.unyt_quantity):
+        qty = u.unyt_quantity(
+            qty.value,
+            qty.units,
+            registry=units.registry
+        )
+    elif isinstance(qty, u.unyt_array):
+        qty = u.unyt_array(
+            qty.value,
+            qty.units,
+            registry=units.registry
+        )
+    else:
+        raise Exception("Quantity is neither an unyt_quantity nor an unyt_array.")
+
+    qty = qty.in_base('rich')
+
+    return qty
+

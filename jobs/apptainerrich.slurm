@@ -29,7 +29,7 @@ module load ALICE/default OpenMPI/5.0.8-GCC-14.3.0
 
 # The Hybrid approach: https://apptainer.org/docs/user/1.0/mpi.html#hybrid-model
 srun apptainer exec --cleanenv \
-       /home/hey4/rich_env.sif /home/hey4/RICH-yihan/build/rich
+       /home/hey4/rich_env.sif /home/hey4/RICH-fwrk/build/rich
 
 # --cleanenv option is important otherwise MPI bugs out. It cleans the
 # environment variable in the container such that it doesn't mix up MPI from
