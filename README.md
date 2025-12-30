@@ -9,7 +9,7 @@ Study of tidal disruption event with the [RICH](https://gitlab.com/eladtan/RICH/
 In parallel, we are developing an I/O package for RICH, named RICHIO. Currently, to install RICHIO, run under the root directory of this repository:
 
 ```
-pip install -e .
+pip install -e ./richio
 ```
 
 and one can import by
