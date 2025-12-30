@@ -1,0 +1,3 @@
+[submodule "richio"]
+	path = richio
+	url = https://github.com/YujieH3/richio.git
