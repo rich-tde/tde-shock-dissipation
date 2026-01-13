@@ -68,6 +68,8 @@ create_environment:
 data: requirements
 	$(PYTHON_INTERPRETER) richio/dataset.py
 
+## Run RICH
+.PHONY:
 
 #################################################################################
 # Self Documenting Commands                                                     #
