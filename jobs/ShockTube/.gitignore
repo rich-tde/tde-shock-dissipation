@@ -1,5 +1,2 @@
 *.txt
 .mpi_stamp*
-build.sh
-run_mpi.sh
-run_serial.sh

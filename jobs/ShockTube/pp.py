@@ -1,43 +1,23 @@
 """
 Post processing of the shock tube tests
 
-do
+Do
 ```
 python pp.py -h
 ```
-To see how to use the script.
+to see how to use the script.
 """
 import os
 import argparse
 import glob
+import warnings
 
 import numpy as np
 import unyt as u
 
 import richio
-from richio.shockfinder.rs import RiemannSolver
-import warnings
+import dev
 
-def _get_at_x(snap,
-           quantity, 
-           x, 
-           xeps=0.05,
-           qeps=1e-2):
-    """
-    Get quantity at x=indices, with coordinate error within xeps and quantity
-    error within qeps.
-    """
-    try:
-        indices = np.abs(snap.x - x * snap.x.units) <= xeps * snap.x.units
-    except:
-        indices = np.abs(snap.x - x) <= xeps * snap.x.units
-    qxs = quantity[indices]
-
-    qerr = (np.max(qxs) - np.min(qxs)) / np.min(qxs)
-    if qerr > qeps: # percentage error
-        warnings.warn(f"Error is {qerr}.")
-    
-    return np.mean(qxs)
 
 if __name__ == '__main__':
 
@@ -53,6 +33,7 @@ if __name__ == '__main__':
     )
     parser.add_argument('snap_dir', type=str, help='Directory containing the .h5 snapshots')
     parser.add_argument('output_fname', type=str, help='Output file name (full paths).')
+    parser.add_argument('-g', '--gamma', type=float, help='The adiabatic index of the gas used in the shock tube.')
     parser.add_argument('-f', '--overwrite', help='Overwrite existing output file.', action='store_true')
     args = parser.parse_args()
 
@@ -77,7 +58,7 @@ if __name__ == '__main__':
         for file in os.listdir(snap_dir):
             if file.endswith('h5'):
                 _snap = richio.load(os.path.join(snap_dir, file))
-                i_shfront = np.argmax(_snap.dissipation) # sh front as the maximum of dissipation, good enough for sod sh; be careful in other setups
+                i_shfront = dev.get_shock_tube_front(_snap.x, _snap.dissipation) # sh front as the maximum of dissipation, good enough for sod sh; be careful in other setups
                 _x = _snap.x[i_shfront]
                 _t = _snap.time[0]
 
@@ -95,41 +76,38 @@ if __name__ == '__main__':
         snap = richio.load(os.path.join(snap_dir, 'snap_final.h5'))
 
         # Get sh front position
-        i_sh = np.argmax(snap.dissipation)
+        i_sh = dev.get_shock_tube_front(snap.x, snap.dissipation)
         x_sh = snap.x[i_sh]
 
         # Near the neighbor of the sh front
-        x1 = x_sh * 1.05  # upstream
-        x2 = x_sh * 0.95  # downstream
+        x1 = x_sh * 1.03  # upstream
+        x2 = x_sh * 0.97  # downstream
 
         # Temperature
         T = snap.P / snap.density * u.mh / u.kb
 
         # Pre/post shock quantities
-        T1 = _get_at_x(snap, T, x=x1)
-        T2 = _get_at_x(snap, T, x=x2)
+        T1 = dev.get_at_x(snap, T, x=x1)
+        T2 = dev.get_at_x(snap, T, x=x2)
 
-        u1 = _get_at_x(snap, snap.sie, x=x1)
-        u2 = _get_at_x(snap, snap.sie, x=x2)
+        u1 = dev.get_at_x(snap, snap.sie, x=x1)
+        u2 = dev.get_at_x(snap, snap.sie, x=x2)
 
-        rho1 = _get_at_x(snap, snap.rho, x=x1)
-        rho2 = _get_at_x(snap, snap.rho, x=x2)
+        rho1 = dev.get_at_x(snap, snap.rho, x=x1)
+        rho2 = dev.get_at_x(snap, snap.rho, x=x2)
 
-        P1 = _get_at_x(snap, snap.P, x=x1)
-        P2 = _get_at_x(snap, snap.P, x=x2)
+        P1 = dev.get_at_x(snap, snap.P, x=x1)
+        P2 = dev.get_at_x(snap, snap.P, x=x2)
 
-        v1_lab = _get_at_x(snap, snap.vx, x=x1) # lab frame
-        v2_lab = _get_at_x(snap, snap.vx, x=x2)
+        v1_lab = dev.get_at_x(snap, snap.vx, x=x1) # lab frame
+        v2_lab = dev.get_at_x(snap, snap.vx, x=x2)
 
         v1_sh = v_sh - v1_lab
         v2_sh = v_sh - v2_lab
 
-        # Total dissipation rate (dissipation rate at sh front as well)
+        # Dissipation rate at shock front
         diss = snap.dissipation * snap.volume
-        diss_tot = np.sum(diss)
-
-        i_sh = (snap.x > x2) & (snap.x < x1)
-        diss_rich = np.sum(diss[i_sh])
+        diss_rich = np.sum(diss[(snap.x > x2) & (snap.x < x1)])
 
         # Cross section
         A = (snap.box_size[4] - snap.box_size[1]) * (snap.box_size[5] - snap.box_size[2])
@@ -179,3 +157,4 @@ if __name__ == '__main__':
         filename = output_fname,
         dataset_name = "internal_energy_jump"
     )
+

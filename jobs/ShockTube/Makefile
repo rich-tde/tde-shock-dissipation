@@ -47,7 +47,7 @@ ALL_SNAPS = $(IC_DIRS:%=%/snap_final.h5)
 .SECONDARY: run_mpi.sh run_serial.sh build.sh .mpi_stamp_0 .mpi_stamp_1  #do not rerun the whole sim if only .sh are updated
 
 #################################################################################
-# MAIN                                                                          #
+# Post-processing                                                               #
 #################################################################################
 
 .PHONY: postprocess
@@ -55,12 +55,17 @@ postprocess: $(PRO_DATA_PATH)/shocktube_tests.hdf5
 
 # Post-processing
 # The "" in the third line is necessary, otherwise * is
-# expanded before python sees it and forbid us from 
-# doing a simple glob.glob()
-$(PRO_DATA_PATH)/shocktube_tests.hdf5: | pp.py
+# expanded before python sees it, which forbid us from 
+# doing glob.glob()
+$(PRO_DATA_PATH)/shocktube_tests.hdf5: $(ALL_SNAPS) pp.py
 	mkdir -p $(@D)
 	source ~/.bashrc && conda activate $(CONDA_ENV) && \
 	python pp.py "$(RAW_DATA_PATH)/*" $@ -f
+
+
+#################################################################################
+# Running simulation                                                            #
+#################################################################################
 
 ## Single run, only defined if not make all
 ifneq ($(IS_ALL),all)
@@ -83,16 +88,25 @@ runall: $(ALL_SNAPS)
 ifeq ($(MPI),1)
 $(RAW_DATA_PATH)/%/snap_final.h5: $(RAW_DATA_PATH)/%/leftpressure.txt \
   $(RAW_DATA_PATH)/%/leftdensity.txt $(RAW_DATA_PATH)/%/rightpressure.txt \
-  $(RAW_DATA_PATH)/%/rightdensity.txt | run_mpi.sh $(RICH_PATH)/build/rich 
+  $(RAW_DATA_PATH)/%/rightdensity.txt $(RICH_PATH)/build/rich | run_mpi.sh 
 	cd $(@D) && sbatch $(CURDIR)/run_mpi.sh
 else
 $(RAW_DATA_PATH)/%/snap_final.h5: $(RAW_DATA_PATH)/%/leftpressure.txt \
   $(RAW_DATA_PATH)/%/leftdensity.txt $(RAW_DATA_PATH)/%/rightpressure.txt \
-  $(RAW_DATA_PATH)/%/rightdensity.txt | run_serial.sh $(RICH_PATH)/build/rich 
+  $(RAW_DATA_PATH)/%/rightdensity.txt $(RICH_PATH)/build/rich | run_serial.sh 
 	cd $(@D) && $(CURDIR)/run_serial.sh
 endif
 
-$(RICH_PATH)/build/rich: | $(RICH_PATH)/runs/ShockTube/main.cpp build.sh .mpi_stamp_$(MPI)
+$(RICH_PATH)/build/rich: $(RICH_PATH)/runs/ShockTube/main.cpp
+	printf '%s\n' \
+		'#!/bin/bash -l' \
+		'rm -r $(RICH_PATH)/build' \
+		'module purge && module restore $(LMOD_ENV)' \
+		'$(RICH_PATH)/config.py --problem=$(RICH_PROBLEM) $(MPI_BUILD_SUFFIX)' \
+		'$(MAKE) -C $(RICH_PATH)' \
+	> $@
+	chmod +x $@
+
 	./build.sh
 
 ifeq ($(MPI),1)
@@ -115,6 +129,7 @@ run_mpi.sh:
 		'cat "$$0"' \
 		'echo "==============================================="' \
 		'module purge && module restore $(LMOD_ENV)' \
+		'sleep $$(shuf -i 0-20 -n 1) # pause a random time between 0-20 seconds to avoid the hdf5 writing error' \
 		'srun $(RICH_PATH)/build/rich' \
 	> $@
 else
@@ -127,29 +142,9 @@ run_serial.sh:
 	chmod +x $@
 endif
 
-build.sh:
-	printf '%s\n' \
-		'#!/bin/bash -l' \
-		'rm -r $(RICH_PATH)/build' \
-		'module purge && module restore $(LMOD_ENV)' \
-		'$(RICH_PATH)/config.py --problem=$(RICH_PROBLEM) $(MPI_BUILD_SUFFIX)' \
-		'$(MAKE) -C $(RICH_PATH)' \
-	> $@
-	chmod +x $@
-
-ifeq ($(MPI),1)
-.mpi_stamp_1:
-	rm -f .mpi_stamp_0
-	touch $@
-else
-.mpi_stamp_0:
-	rm -f .mpi_stamp_1
-	touch $@
-endif	
-
 .PHONY: allics
 allics:
-	source ~/.bashrc && conda activate $(CONDA_ENV) && python ics.py $(RAW_DATA_PATH) -n 10
+	source ~/.bashrc && conda activate $(CONDA_ENV) && python ics.py $(RAW_DATA_PATH) -n 20
 
 .PHONY: clean
 clean:

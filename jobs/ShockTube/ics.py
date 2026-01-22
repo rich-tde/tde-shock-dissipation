@@ -2,30 +2,15 @@
 """
 Generates a series of initial conditions for shock tube tests.
 
+Do
 ```
 python ics.py -h
 ```
-
-To see 
+to see how to use the script.
 """
 import os
 import numpy as np
 import argparse
-
-parser = argparse.ArgumentParser(
-                    prog='ics.py',
-                    description="""Generates the initial conditions for RICH
-                    test problem ShockTube. Creates the corresponding folders
-                    and initial condition files for RICH.""",
-                    epilog='')
-parser.add_argument('output_dir', type=str, help='Output directory to create new folders and files.')
-parser.add_argument('-n', '--number', type=int, help='Number of initial conditions it will generate. Default to 10.', 
-                    default=10)
-args = parser.parse_args()
-
-output_dir = args.output_dir
-N = args.number
-
 
 def P_hugoniot(rho, P_ref, rho_ref, gamma=5/3): # uses rho2, P2 as reference point
     return P_ref * ((gamma + 1)*rho - (gamma - 1)*rho_ref) / ((gamma + 1)*rho_ref - (gamma - 1)*rho)
@@ -43,14 +28,31 @@ def write_number(file, number, overwrite=False):
 
 
 if __name__ == '__main__':
-    R = np.linspace(1+1e-3, 4-1e-5, N, endpoint=True) # compression ratio
-    DL = np.ones_like(R)          # left density
-    DR = DL / R
-    PL = np.ones_like(R)
-    PR = P_hugoniot(DR, P_ref=PL, rho_ref=DL)
+
+    parser = argparse.ArgumentParser(
+                        prog='ics.py',
+                        description="""Generates the initial conditions for RICH
+                        test problem ShockTube. Creates the corresponding folders
+                        and initial condition files for RICH.""",
+                        epilog='')
+    parser.add_argument('output_dir', type=str, 
+                        help='Output directory to create new folders and files.')
+    parser.add_argument('-n', '--number', type=int, 
+                        help='Number of initial conditions it will generate. Default to 10.', 
+                        default=10)
+    args = parser.parse_args()
+
+    output_dir = args.output_dir
+    N = args.number
+    
+    # Follow Schaal+15
+    DL = np.ones(N) * 1.0         # left density
+    DR = np.ones(N) * 0.125
+    PL = np.logspace(0, 4, N, endpoint=True)
+    PR = np.ones(N) * 0.1
 
     for i in range(N):
-        dir = f'PL{PL[i]:.1f}PR{PR[i]:.3f}DL{DL[i]:.1f}DR{DR[i]:.3f}'
+        dir = f'PL{PL[i]:.1f}PR{PR[i]:.1f}DL{DL[i]:.1f}DR{DR[i]:.3f}'
         dir = os.path.join(output_dir, dir)
         os.makedirs(dir, exist_ok=True)
 

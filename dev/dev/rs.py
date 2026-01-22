@@ -1,7 +1,5 @@
 
-import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.widgets import Slider, Button
 
 """
 Create Your Own Riemann Solver (With Python)
