@@ -12,7 +12,7 @@ LMOD_ENV := new_rich_build			# This will be called by module restore $(LMOD_ENV)
 CONDA_ENV := richanalysis
 RICH_PATH := /home/hey4/RICH-fwrk
 RAW_DATA_PATH := /home/hey4/rich_tde/data/raw/ShockTubeIdealGas
-PRO_DATA_PATH := /home/hey4/rich_tde/data/processed/ShockTubeIdealGas
+PRO_DATA_PATH := $(subst raw,processed,$(RAW_DATA_PATH))
 
 MPI ?= 0
 
@@ -44,7 +44,7 @@ all:
 IC_DIRS = $(shell ls -d $(RAW_DATA_PATH)/PL*PR*DL*DR* 2>/dev/null)
 ALL_SNAPS = $(IC_DIRS:%=%/snap_final.h5)
 
-.SECONDARY: run_mpi.sh run_serial.sh build.sh .mpi_stamp_0 .mpi_stamp_1  #do not rerun the whole sim if only .sh are updated
+.SECONDARY: run_mpi.sh run_serial.sh build.sh #do not rerun the whole sim if only .sh are updated
 
 #################################################################################
 # Post-processing                                                               #
@@ -57,7 +57,7 @@ postprocess: $(PRO_DATA_PATH)/shocktube_tests.hdf5
 # The "" in the third line is necessary, otherwise * is
 # expanded before python sees it, which forbid us from 
 # doing glob.glob()
-$(PRO_DATA_PATH)/shocktube_tests.hdf5: $(ALL_SNAPS) pp.py
+$(PRO_DATA_PATH)/shocktube_tests.hdf5: pp.py
 	mkdir -p $(@D)
 	source ~/.bashrc && conda activate $(CONDA_ENV) && \
 	python pp.py "$(RAW_DATA_PATH)/*" $@ -f
@@ -104,8 +104,8 @@ $(RICH_PATH)/build/rich: $(RICH_PATH)/runs/ShockTube/main.cpp
 		'module purge && module restore $(LMOD_ENV)' \
 		'$(RICH_PATH)/config.py --problem=$(RICH_PROBLEM) $(MPI_BUILD_SUFFIX)' \
 		'$(MAKE) -C $(RICH_PATH)' \
-	> $@
-	chmod +x $@
+	> ./build.sh
+	chmod +x ./build.sh
 
 	./build.sh
 

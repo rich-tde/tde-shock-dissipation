@@ -145,3 +145,16 @@ def dp2s(rho, p, gamma=5/3):
         np.log(u.mh / rho * ((4*np.pi*u.mh**2*sie)/(3*u.h**2))**(3/2)) + 5/2
         ) 
     return s
+
+def delta(M, gamma=5/3):
+    R = 1/((gamma - 1)/(gamma + 1) + 2/(gamma + 1)/M**2) # R = rho2/rho1
+    delta = 2/(gamma*(gamma - 1) * M**2 * R) * ((2*gamma*M**2 - (gamma - 1))/(gamma + 1) - R**gamma)
+    return delta
+
+def R2M(R, gamma=5/3):
+    """Mach number from compression ratio rho2/rho1."""
+    return 1/np.sqrt((gamma + 1)/(2*R) - (gamma - 1)/2)
+
+def M2R(M, gamma=5/3):
+    """Compression ratio rho2/rho1 from Mach number."""
+    return (gamma + 1)*M**2 / ((gamma - 1)*M**2 + 2)

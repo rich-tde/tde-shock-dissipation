@@ -47,8 +47,10 @@ if __name__ == '__main__':
     # Initialize
     rho2_to_rho1_arr = []
     diss_dupdv_arr = []
+    diss_schaal_arr = []
     diss_rich_arr = []
     diss_ie_arr = []
+    mach_number_arr = []
 
     for snap_dir in snap_dirs:
         ## Find the shock speed from fitting
@@ -112,23 +114,37 @@ if __name__ == '__main__':
         # Cross section
         A = (snap.box_size[4] - snap.box_size[1]) * (snap.box_size[5] - snap.box_size[2])
 
+        # du + Pdv calculation: Should be the same as diss_schaal if we
+        # have perfect measurement of post shock state. (Many cases difficult)
         diss_dupdv = (u2 * rho2 - u1 * (rho2/rho1)**gamma * rho1) * v2_sh * A
 
         diss_ie = (u2 * rho2 * v2_sh - u1 * rho1 * v1_sh) * A
 
         rho2_to_rho1 = rho2/rho1
 
+        # The Schaal+15 method: This has the benefit of only needing the
+        # preshock state + mach number. Usually is good.
+        M = np.sqrt(rho1 * v_sh**2 / (P1 * gamma)) # M = v_sh / c_1
+        R = 1/((gamma - 1)/(gamma + 1) + 2/(gamma + 1)/M**2) # R = rho2/rho1
+        deltaM = 2/(gamma*(gamma - 1) * M**2 * R) * ((2*gamma*M**2 - (gamma - 1))/(gamma + 1) - R**gamma)
+        diss_schaal = 1/2*rho1*v_sh**3*A*deltaM 
+
+
         rho2_to_rho1_arr.append(rho2_to_rho1)
         diss_dupdv_arr.append(diss_dupdv)
+        diss_schaal_arr.append(diss_schaal)
         diss_rich_arr.append(diss_rich)
         diss_ie_arr.append(diss_ie)
+        mach_number_arr.append(M)
 
     
-    rho2_to_rho1_arr = u.unyt_array([rho2_to_rho1_arr])
-    diss_dupdv_arr = u.unyt_array([diss_dupdv_arr])    
-    diss_rich_arr = u.unyt_array([diss_rich_arr])      
-    diss_ie_arr = u.unyt_array([diss_ie_arr])          
-    
+    rho2_to_rho1_arr = u.unyt_array(rho2_to_rho1_arr)
+    diss_dupdv_arr = u.unyt_array(diss_dupdv_arr)    
+    diss_schaal_arr = u.unyt_array(diss_schaal_arr)
+    diss_rich_arr = u.unyt_array(diss_rich_arr)      
+    diss_ie_arr = u.unyt_array(diss_ie_arr)          
+    mach_number_arr = u.unyt_array(mach_number_arr)
+
     ## Save using u.write_hdf5
     if os.path.isfile(output_fname) and not overwrite:
         raise FileExistsError(
@@ -153,8 +169,16 @@ if __name__ == '__main__':
         filename = output_fname,
         dataset_name = "dupdv_dissipation"
     )
+    diss_schaal_arr.write_hdf5(
+        filename = output_fname,
+        dataset_name = "schaal_dissipation"
+    )
     diss_ie_arr.write_hdf5(
         filename = output_fname,
         dataset_name = "internal_energy_jump"
+    )
+    mach_number_arr.write_hdf5(
+        filename = output_fname,
+        dataset_name = "mach number"
     )
 

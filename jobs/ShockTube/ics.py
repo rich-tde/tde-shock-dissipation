@@ -46,10 +46,16 @@ if __name__ == '__main__':
     N = args.number
     
     # Follow Schaal+15
-    DL = np.ones(N) * 1.0         # left density
-    DR = np.ones(N) * 0.125
-    PL = np.logspace(0, 4, N, endpoint=True)
-    PR = np.ones(N) * 0.1
+    DL = np.ones(N-1) * 1.0         # left density
+    DR = np.ones(N-1) * 1.0
+    PL = np.logspace(np.log10(1+1e-3), 4, N-1, endpoint=True)
+    PR = np.ones(N-1) * 1.0
+
+    # Always add a sod shock
+    DL = np.append(DL, 1.0)
+    DR = np.append(DR, 0.125)
+    PL = np.append(PL, 1.0)
+    PR = np.append(PR, 0.1)
 
     for i in range(N):
         dir = f'PL{PL[i]:.1f}PR{PR[i]:.1f}DL{DL[i]:.1f}DR{DR[i]:.3f}'
