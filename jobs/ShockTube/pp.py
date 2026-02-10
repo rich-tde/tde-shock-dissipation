@@ -21,9 +21,6 @@ import dev
 
 if __name__ == '__main__':
 
-    ## Constants
-    gamma = 5/3
-
     ## Command line arguments
     parser = argparse.ArgumentParser(
     prog='pp.py',
@@ -33,16 +30,16 @@ if __name__ == '__main__':
     )
     parser.add_argument('snap_dir', type=str, help='Directory containing the .h5 snapshots')
     parser.add_argument('output_fname', type=str, help='Output file name (full paths).')
-    parser.add_argument('-g', '--gamma', type=float, help='The adiabatic index of the gas used in the shock tube.')
+    parser.add_argument('-g', '--gamma', type=float, help='The adiabatic index of the gas used in the shock tube.', default=5/3)
     parser.add_argument('-f', '--overwrite', help='Overwrite existing output file.', action='store_true')
     args = parser.parse_args()
 
     output_fname = args.output_fname
     overwrite = args.overwrite
-
     snap_dirs = sorted(glob.glob(args.snap_dir))
     if not snap_dirs:
         raise FileNotFoundError(f"No files found matching pattern: {args.input_pattern}")
+    gamma = args.gamma
 
     # Initialize
     rho2_to_rho1_arr = []
@@ -67,6 +64,9 @@ if __name__ == '__main__':
                 _xs.append(_x)
                 _ts.append(_t)
 
+        if len(_xs) == 0 or len(_ts) == 0:
+            raise FileNotFoundError(f"No h5 file found under the directory: {snap_dir}.")
+
         _xs = u.unyt_array(_xs)
         _ts = u.unyt_array(_ts)
 
@@ -74,16 +74,16 @@ if __name__ == '__main__':
         v_sh *= richio.units.lscale / richio.units.tscale
 
         ## Get pre post shock quantities
-
         snap = richio.load(os.path.join(snap_dir, 'snap_final.h5'))
+        print(f"Analysing {snap.path}")
 
         # Get sh front position
         i_sh = dev.get_shock_tube_front(snap.x, snap.dissipation)
         x_sh = snap.x[i_sh]
 
         # Near the neighbor of the sh front
-        x1 = x_sh * 1.03  # upstream
-        x2 = x_sh * 0.97  # downstream
+        x1 = x_sh * 1.05  # upstream
+        x2 = x_sh * 0.95  # downstream
 
         # Temperature
         T = snap.P / snap.density * u.mh / u.kb
@@ -129,6 +129,10 @@ if __name__ == '__main__':
         deltaM = 2/(gamma*(gamma - 1) * M**2 * R) * ((2*gamma*M**2 - (gamma - 1))/(gamma + 1) - R**gamma)
         diss_schaal = 1/2*rho1*v_sh**3*A*deltaM 
 
+        print(f"Compression {rho2_to_rho1}")
+        print(f"RICH: {diss_rich}")
+        print(f"du+pdv: {diss_dupdv}")
+        print(f"Schaal+15: {diss_schaal}")
 
         rho2_to_rho1_arr.append(rho2_to_rho1)
         diss_dupdv_arr.append(diss_dupdv)

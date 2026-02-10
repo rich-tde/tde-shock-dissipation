@@ -11,7 +11,9 @@ RICH_PROBLEM := ShockTube
 LMOD_ENV := new_rich_build			# This will be called by module restore $(LMOD_ENV)
 CONDA_ENV := richanalysis
 RICH_PATH := /home/hey4/RICH-fwrk
-RAW_DATA_PATH := /home/hey4/rich_tde/data/raw/ShockTubeIdealGas
+
+GAMMA := 1.001#CHECK THIS BEFORE RUN
+RAW_DATA_PATH := /home/hey4/rich_tde/data/raw/ShockTubeIdealGasGamma1.001#CHECK THIS BEFORE RUN
 PRO_DATA_PATH := $(subst raw,processed,$(RAW_DATA_PATH))
 
 MPI ?= 0
@@ -60,7 +62,7 @@ postprocess: $(PRO_DATA_PATH)/shocktube_tests.hdf5
 $(PRO_DATA_PATH)/shocktube_tests.hdf5: pp.py
 	mkdir -p $(@D)
 	source ~/.bashrc && conda activate $(CONDA_ENV) && \
-	python pp.py "$(RAW_DATA_PATH)/*" $@ -f
+	python pp.py "$(RAW_DATA_PATH)/*" $@ -f -g $(GAMMA)
 
 
 #################################################################################

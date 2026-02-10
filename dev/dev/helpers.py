@@ -129,7 +129,7 @@ def P_poisson(rho, P_ref, rho_ref, gamma=5/3):
 def P_hugoniot(rho, P_ref, rho_ref, gamma=5/3): # uses rho2, P2 as reference point
     return P_ref * ((gamma + 1)*rho - (gamma - 1)*rho_ref) / ((gamma + 1)*rho_ref - (gamma - 1)*rho)
 
-def P_rayleigh(v, v1, v2, P1, P2, gamma=5/3):
+def P_rayleigh(v, v1, v2, P1, P2):
     return P1 + (P2 - P1) * (v - v1) / (v2 - v1)
 
 def dp2s(rho, p, gamma=5/3):
