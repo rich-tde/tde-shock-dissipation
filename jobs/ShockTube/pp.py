@@ -122,7 +122,7 @@ if __name__ == '__main__':
 
         rho2_to_rho1 = rho2/rho1
 
-        # The Schaal+15 method: This has the benefit of only needing the
+        # The Schaal+14 method: This has the benefit of only needing the
         # preshock state + mach number. Usually is good.
         M = np.sqrt(rho1 * v_sh**2 / (P1 * gamma)) # M = v_sh / c_1
         R = 1/((gamma - 1)/(gamma + 1) + 2/(gamma + 1)/M**2) # R = rho2/rho1
@@ -132,7 +132,7 @@ if __name__ == '__main__':
         print(f"Compression {rho2_to_rho1}")
         print(f"RICH: {diss_rich}")
         print(f"du+pdv: {diss_dupdv}")
-        print(f"Schaal+15: {diss_schaal}")
+        print(f"Schaal+14: {diss_schaal}")
 
         rho2_to_rho1_arr.append(rho2_to_rho1)
         diss_dupdv_arr.append(diss_dupdv)

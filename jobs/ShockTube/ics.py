@@ -45,7 +45,7 @@ if __name__ == '__main__':
     output_dir = args.output_dir
     N = args.number
     
-    # Follow Schaal+15
+    # Follow Schaal+14
     DL = np.ones(N-1) * 1.0         # left density
     DR = np.ones(N-1) * 1.0
     PL = np.logspace(np.log10(1+1e-3), 4, N-1, endpoint=True)
