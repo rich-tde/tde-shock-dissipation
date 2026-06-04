@@ -1,5 +1,5 @@
 # Data
-/data/
+data
 *.h5
 *.vtu
 
@@ -195,3 +195,4 @@ cython_debug/
 
 # Mine
 logs
+reports
