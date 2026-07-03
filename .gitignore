@@ -196,3 +196,5 @@ cython_debug/
 # Mine
 logs
 reports
+.vscode
+jobs
