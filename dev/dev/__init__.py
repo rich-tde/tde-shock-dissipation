@@ -1,5 +1,6 @@
 from dev.helpers import *
 
 import matplotlib.pyplot as plt
-
-plt.style.use("/home/hey4/rich_tde/academic-mplstyle/nice.mplstyle")
+from pathlib import Path
+path = Path(__file__).parent.parent.parent / "academic-mplstyle/nice.mplstyle"
+plt.style.use(path)
