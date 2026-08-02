@@ -32,6 +32,7 @@ import sys
 import numpy as np
 
 # scripts/ is on sys.path[0]; reuse the existing single-field driver's helpers.
+import movie_zoom  # pencil_box, camera_zoom_for, beam_selection
 import render_evolution  # BOX_PRESETS, find_snapshots, _scalebar_for_box
 import tde_frame  # make_bh_frame_loader, select_unbound_outflow
 
@@ -50,16 +51,21 @@ FIELD_RECIPE = {
 _CFG: dict = {}
 
 
-def _index_map(snap, coords, res, box, workers):
+def _index_map(snap, coords, res, box, workers, selection=None):
     """Build the geometric NN index map once and return it with grid metadata.
 
     Mirrors the index-map + bbox/dims/time computation inside
     :func:`richio.render.grid.to_uniform_grid`, but stops *before* materialising
     any field cube so the caller can apply it to one field at a time.
+
+    *selection* restricts which cells enter the k-d tree (the zoom views pass a
+    pencil-beam mask so the tree is built from a small subset).  ``to_3dgrid``
+    maps the result back to absolute particle indices, so the returned *i* still
+    indexes full-length field arrays either way.
     """
     cx, cy, cz = coords
     i, xspace, yspace, zspace = snap.to_3dgrid(
-        res, X=cx, Y=cy, Z=cz, box_size=box, workers=workers
+        res, X=cx, Y=cy, Z=cz, box_size=box, workers=workers, selection=selection
     )
     dims = tuple(int(s) for s in i.shape)
 
@@ -110,42 +116,67 @@ def _field_grid(snap, i, bbox, dims, time_val, time_unit, coords, field, weight,
                        coords=coords)
 
 
-def _render_fields(snap, i, bbox, dims, tval, tunit, annotate, azimuth, idx, cfg):
-    """Project and save every field for one camera angle from a shared index map."""
+def _render_fields(snap, i, bbox, dims, tval, tunit, annotate, azimuth, idx, cfg, view,
+                   mask=None):
+    """Project and save every field for one camera angle from a shared index map.
+
+    *view* carries the per-view geometry (box, camera zoom, scale bar, output
+    directory) so the wide and close-up views share this code path.
+    """
     from richio.render import volume_image
 
-    mask = cfg["mask_fn"](snap) if cfg["mask_fn"] is not None else None
     for field in cfg["fields"]:
         rec = cfg["recipe"][field]
         grid = _field_grid(snap, i, bbox, dims, tval, tunit, cfg["coords"], field,
                            rec["weight"], mask, cfg["derived_kw"], cfg["unit_system"])
-        out_png = os.path.join(cfg["frames_dir"][field], f"frame_{idx:05d}.png")
+        out_png = os.path.join(view["frames_dir"][field], f"frame_{idx:05d}.png")
         volume_image(
             snap, field, grid=grid, mode="projection", weight=rec["weight"],
             flip_x=cfg["flip_x"], log=(rec["norm"] == "log"), norm=rec["norm"],
             linthresh=rec["linthresh"], vmin=cfg["vmins"][field], vmax=cfg["vmaxs"][field],
             cmap=rec["cmap"], colorbar=True, resolution=cfg["resolution"],
-            azimuth=azimuth, elevation=cfg["elevation"], zoom=cfg["zoom"],
+            azimuth=azimuth, elevation=cfg["elevation"], zoom=view["zoom"],
             rot_axis=(0.0, 0.0, 1.0), annotate=annotate, axis_triad=True,
-            scalebar_frac=cfg["scalebar_frac"], scalebar_label=cfg["scalebar_label"],
+            scalebar_frac=view["scalebar_frac"], scalebar_label=view["scalebar_label"],
             filename=out_png,
         )
         del grid
 
 
 def _render_evolution_frame(task):
-    """One evolution frame (own process loads its own snapshot, one tree build)."""
+    """One evolution frame (own process loads its own snapshot, one tree build/view).
+
+    Resume-safe: a view whose PNGs all exist already is skipped, so a re-submit
+    after a walltime kill continues instead of redoing finished frames.
+    """
     from richio.render.evolution import _evolution_label
     import richio
 
     idx, path = task
     cfg = _CFG
+    todo = [v for v in cfg["views"] if not _view_done(v, idx, cfg["fields"])]
+    if not todo:
+        return idx
     snap = richio.load(path)
-    i, bbox, dims, tval, tunit = _index_map(snap, cfg["coords"], cfg["res"],
-                                            cfg["box"], cfg["workers"])
     annotate = _evolution_label(snap, path, cfg["days_per_tfb"]) if cfg["annotate_time"] else None
-    _render_fields(snap, i, bbox, dims, tval, tunit, annotate, cfg["azimuth"], idx, cfg)
+    mask = cfg["mask_fn"](snap) if cfg["mask_fn"] is not None else None
+    for view in todo:
+        sel = view["selection_fn"](snap) if view["selection_fn"] is not None else None
+        i, bbox, dims, tval, tunit = _index_map(snap, cfg["coords"], view["res"],
+                                                view["box"], cfg["workers"], selection=sel)
+        _render_fields(snap, i, bbox, dims, tval, tunit, annotate, cfg["azimuth"],
+                       idx, cfg, view, mask)
+        del i
     return idx
+
+
+def _view_done(view, idx, fields):
+    """True when every field's PNG for this frame already exists and is non-empty."""
+    for field in fields:
+        p = os.path.join(view["frames_dir"][field], f"frame_{idx:05d}.png")
+        if not (os.path.exists(p) and os.path.getsize(p) > 0):
+            return False
+    return True
 
 
 def _render_spin(final_path, n_evo, cfg, k_lo=0, k_hi=None):
@@ -165,30 +196,80 @@ def _render_spin(final_path, n_evo, cfg, k_lo=0, k_hi=None):
     if k_hi <= k_lo:
         return
     snap = richio.load(final_path)
-    i, bbox, dims, tval, tunit = _index_map(snap, cfg["coords"], cfg["res"],
-                                            cfg["box"], cfg["workers"])
     annotate = _evolution_label(snap, final_path, cfg["days_per_tfb"]) if cfg["annotate_time"] else None
     mask = cfg["mask_fn"](snap) if cfg["mask_fn"] is not None else None
     angles = cfg["azimuth"] + np.linspace(0.0, cfg["spin_angle"], cfg["spin_frames"],
                                           endpoint=False)
-    for field in cfg["fields"]:
-        rec = cfg["recipe"][field]
-        grid = _field_grid(snap, i, bbox, dims, tval, tunit, cfg["coords"], field,
-                           rec["weight"], mask, cfg["derived_kw"], cfg["unit_system"])
-        for k in range(k_lo, k_hi):
-            az = angles[k]
-            out_png = os.path.join(cfg["frames_dir"][field], f"frame_{n_evo + k:05d}.png")
-            volume_image(
-                snap, field, grid=grid, mode="projection", weight=rec["weight"],
-                flip_x=cfg["flip_x"], log=(rec["norm"] == "log"), norm=rec["norm"],
-                linthresh=rec["linthresh"], vmin=cfg["vmins"][field], vmax=cfg["vmaxs"][field],
-                cmap=rec["cmap"], colorbar=True, resolution=cfg["resolution"],
-                azimuth=float(az), elevation=cfg["elevation"], zoom=cfg["zoom"],
-                rot_axis=(0.0, 0.0, 1.0), annotate=annotate, axis_triad=True,
-                scalebar_frac=cfg["scalebar_frac"], scalebar_label=cfg["scalebar_label"],
-                filename=out_png,
-            )
-        del grid
+    for view in cfg["views"]:
+        sel = view["selection_fn"](snap) if view["selection_fn"] is not None else None
+        i, bbox, dims, tval, tunit = _index_map(snap, cfg["coords"], view["res"],
+                                                view["box"], cfg["workers"], selection=sel)
+        for field in cfg["fields"]:
+            rec = cfg["recipe"][field]
+            grid = _field_grid(snap, i, bbox, dims, tval, tunit, cfg["coords"], field,
+                               rec["weight"], mask, cfg["derived_kw"], cfg["unit_system"])
+            for k in range(k_lo, k_hi):
+                az = angles[k]
+                out_png = os.path.join(view["frames_dir"][field],
+                                       f"frame_{n_evo + k:05d}.png")
+                volume_image(
+                    snap, field, grid=grid, mode="projection", weight=rec["weight"],
+                    flip_x=cfg["flip_x"], log=(rec["norm"] == "log"), norm=rec["norm"],
+                    linthresh=rec["linthresh"], vmin=cfg["vmins"][field],
+                    vmax=cfg["vmaxs"][field],
+                    cmap=rec["cmap"], colorbar=True, resolution=cfg["resolution"],
+                    azimuth=float(az), elevation=cfg["elevation"], zoom=view["zoom"],
+                    rot_axis=(0.0, 0.0, 1.0), annotate=annotate, axis_triad=True,
+                    scalebar_frac=view["scalebar_frac"],
+                    scalebar_label=view["scalebar_label"],
+                    filename=out_png,
+                )
+            del grid
+        del i
+
+
+def _make_view(name, box, res, zoom, scalebar_frac, scalebar_label, selection_fn,
+               frames_root, fields):
+    """One rendered view: a box + camera + its own frame directories.
+
+    The wide view and any close-up are just different entries in this list, so
+    they share the whole render path and differ only in geometry.  *name* is the
+    output-stem suffix (``""`` for the wide view, ``"zoom"`` for the close-up).
+    """
+    sub = f"{{f}}_{name}" if name else "{f}"
+    frames_dir = {f: os.path.join(frames_root, sub.format(f=f)) for f in fields}
+    for d in frames_dir.values():
+        os.makedirs(d, exist_ok=True)
+    return dict(name=name, box=box, res=res, zoom=zoom, scalebar_frac=scalebar_frac,
+                scalebar_label=scalebar_label, selection_fn=selection_fn,
+                frames_dir=frames_dir)
+
+
+def _zoom_views(args, box, frames_root, fields, coords):
+    """The close-up view list for ``--zoom-rp`` (empty when off or not face-on).
+
+    Restricted to face-on cameras: the pencil-beam box only preserves the wide
+    view's column integral when the line of sight is z, so a tilted camera would
+    silently produce a *different* quantity rather than a magnified one.
+    """
+    if not args.zoom_rp:
+        return []
+    if abs(args.elevation - 90.0) > 1e-6:
+        print(f"[multi] --zoom-rp ignored: needs a face-on camera "
+              f"(elevation 90, got {args.elevation})", flush=True)
+        return []
+
+    r_p = movie_zoom.pericentre_radius(args.m_bh, args.m_star, args.r_star, args.beta)
+    half_width = args.zoom_rp * r_p
+    zbox = movie_zoom.pencil_box(box, half_width)
+    cam_zoom = movie_zoom.camera_zoom_for(zbox, 2.0 * half_width)
+    frac, label = movie_zoom.scalebar_in_rp(zbox, cam_zoom, r_p)
+    sel = functools.partial(movie_zoom.beam_selection, coords=coords,
+                            half_width=half_width)
+    return [_make_view("zoom", zbox, args.zoom_res or args.res, cam_zoom,
+                       frac if args.scalebar else None,
+                       label if args.scalebar else None,
+                       sel, frames_root, fields)]
 
 
 def _parse_aligned(s, fields, cast=str):
@@ -230,6 +311,14 @@ def main(argv=None):
     p.add_argument("--bh-frame", action="store_true")
     p.add_argument("--flip-x", action="store_true")
     p.add_argument("--no-annotate", action="store_true", help="Drop the time/snap label.")
+    p.add_argument("--zoom-rp", type=float, default=0.0,
+                   help="Also render a face-on close-up reaching this many r_p in x and y "
+                        "(e.g. 2.5); 0 = off.  The close-up keeps the wide box's full "
+                        "line-of-sight extent, so it is a true magnification sharing the "
+                        "wide colour limits.  Face-on cameras only (elevation 90).")
+    p.add_argument("--zoom-res", type=int, default=None,
+                   help="Interpolation resolution for the close-up (default: --res, which "
+                        "makes its z spacing identical to the wide grid's).")
     p.add_argument("--spin-frames", type=int, default=90)
     p.add_argument("--spin-angle", type=float, default=360.0)
     p.add_argument("--m-bh", type=float, default=1e4)
@@ -291,6 +380,17 @@ def main(argv=None):
         print(f"No snapshots found in {args.run_dir}", file=sys.stderr)
         return 1
 
+    # Most snapshots here are NPY directories, which store no time -- only the
+    # early/late .h5 ones do.  Without this calibration the label's "t = ... d"
+    # line silently vanishes on every NPY frame, so derive days-per-tfb once in
+    # the parent (it is a run-wide constant) and hand it to the workers.
+    days_per_tfb = args.days_per_tfb
+    if days_per_tfb is None:
+        from richio.render.evolution import _calibrate_days_per_tfb
+
+        days_per_tfb = _calibrate_days_per_tfb(snaps)
+    print(f"[multi] days_per_tfb = {days_per_tfb}", flush=True)
+
     # Scale bar sized to the tidal radius r_t = R*(M_BH/M*)^(1/3), as render_evolution.
     scalebar_frac = scalebar_label = None
     if args.scalebar:
@@ -307,9 +407,14 @@ def main(argv=None):
     os.makedirs(args.outdir, exist_ok=True)
     jid = os.environ.get("SLURM_JOB_ID", "local")
     frames_root = args.frames_root or os.path.abspath(f"/tmp/{args.tag}_{jid}")
-    frames_dir = {f: os.path.join(frames_root, f) for f in fields}
-    for d in frames_dir.values():
-        os.makedirs(d, exist_ok=True)
+
+    views = [_make_view("", box, args.res, args.zoom, scalebar_frac, scalebar_label,
+                        None, frames_root, fields)]
+    views += _zoom_views(args, box, frames_root, fields, coords)
+    for v in views:
+        print(f"[multi] view '{v['name'] or 'wide'}': box={[round(b, 2) for b in v['box']]} "
+              f"res={v['res']} camera_zoom={v['zoom']:.4f} bar={v['scalebar_label']}",
+              flush=True)
 
     _CFG.update(dict(
         fields=fields, recipe=recipe, coords=coords, box=box, res=args.res,
@@ -319,8 +424,8 @@ def main(argv=None):
         scalebar_label=scalebar_label, mask_fn=mask_fn, unit_system="cgs",
         derived_kw=dict(m_bh=args.m_bh, m_star=args.m_star, r_star=args.r_star,
                         coords=coords),
-        annotate_time=(not args.no_annotate), days_per_tfb=args.days_per_tfb,
-        frames_dir=frames_dir, spin_frames=args.spin_frames, spin_angle=args.spin_angle,
+        annotate_time=(not args.no_annotate), days_per_tfb=days_per_tfb,
+        views=views, spin_frames=args.spin_frames, spin_angle=args.spin_angle,
     ))
 
     n = len(snaps)
@@ -366,11 +471,13 @@ def main(argv=None):
               f"(frames kept in {frames_root})", flush=True)
         return 0
 
-    for f in fields:
-        stem = args.name_template.format(tag=args.tag, field=f)
-        out = os.path.join(args.outdir, f"{stem}.mp4")
-        _encode_movie(frames_dir[f], total, out, args.fps)
-        print(f"[multi] done -> {out}", flush=True)
+    for view in views:
+        suffix = f"_{view['name']}" if view["name"] else ""
+        for f in fields:
+            stem = args.name_template.format(tag=args.tag, field=f)
+            out = os.path.join(args.outdir, f"{stem}{suffix}.mp4")
+            _encode_movie(view["frames_dir"][f], total, out, args.fps)
+            print(f"[multi] done -> {out}", flush=True)
     if not args.keep_frames:
         _cleanup_frames(frames_root)
     return 0

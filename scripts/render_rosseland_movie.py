@@ -23,11 +23,13 @@ Example (face-on, box A)::
 """
 
 import argparse
+import functools
 import os
 import sys
 
 import numpy as np
 
+import movie_zoom  # pencil_box, camera_zoom_for, beam_selection
 import render_evolution  # BOX_PRESETS, find_snapshots, _scalebar_for_box
 import tde_frame  # make_bh_frame_loader
 import opacity_interpolator
@@ -67,18 +69,18 @@ def _opacity_grid(snap, i, bbox, dims, tval, tunit, coords, unit_system="cgs"):
     )
 
 
-def _render_frame(snap, i, bbox, dims, tval, tunit, annotate, idx, cfg):
+def _render_frame(snap, i, bbox, dims, tval, tunit, annotate, idx, cfg, view):
     from richio.render import volume_image
 
     grid = _opacity_grid(snap, i, bbox, dims, tval, tunit, cfg["coords"])
-    out_png = os.path.join(cfg["frames_dir"], f"frame_{idx:05d}.png")
+    out_png = os.path.join(view["frames_dir"], f"frame_{idx:05d}.png")
     volume_image(
         snap, "rosseland_alpha", grid=grid, mode="projection", weight=None,
         flip_x=cfg["flip_x"], log=True, norm="log", vmin=cfg["vmin"], vmax=cfg["vmax"],
         cmap="inferno", colorbar=True, resolution=cfg["resolution"],
-        azimuth=cfg["azimuth"], elevation=cfg["elevation"], zoom=cfg["zoom"],
+        azimuth=cfg["azimuth"], elevation=cfg["elevation"], zoom=view["zoom"],
         rot_axis=(0.0, 0.0, 1.0), annotate=annotate, axis_triad=True,
-        scalebar_frac=cfg["scalebar_frac"], scalebar_label=cfg["scalebar_label"],
+        scalebar_frac=view["scalebar_frac"], scalebar_label=view["scalebar_label"],
         filename=out_png,
     )
 
@@ -98,16 +100,65 @@ def _render_evolution_frame(task):
 
     idx, path = task
     cfg = _CFG
-    out_png = os.path.join(cfg["frames_dir"], f"frame_{idx:05d}.png")
-    if os.path.exists(out_png) and os.path.getsize(out_png) > 0:
+    todo = []
+    for view in cfg["views"]:
+        p = os.path.join(view["frames_dir"], f"frame_{idx:05d}.png")
+        if not (os.path.exists(p) and os.path.getsize(p) > 0):
+            todo.append(view)
+    if not todo:
         return idx  # already rendered — resume
     snap = richio.load(path)
-    i, bbox, dims, tval, tunit = render_evolution_multi._index_map(
-        snap, cfg["coords"], cfg["res"], cfg["box"], cfg["workers"]
-    )
     annotate = _evolution_label(snap, path, cfg["days_per_tfb"]) if cfg["annotate_time"] else None
-    _render_frame(snap, i, bbox, dims, tval, tunit, annotate, idx, cfg)
+    for view in todo:
+        sel = view["selection_fn"](snap) if view["selection_fn"] is not None else None
+        i, bbox, dims, tval, tunit = render_evolution_multi._index_map(
+            snap, cfg["coords"], view["res"], view["box"], cfg["workers"], selection=sel
+        )
+        _render_frame(snap, i, bbox, dims, tval, tunit, annotate, idx, cfg, view)
+        del i
     return idx
+
+
+def _make_view(name, box, res, zoom, scalebar_frac, scalebar_label, selection_fn,
+               frames_root):
+    """One rendered view: a box + camera + its own frame directory.
+
+    Single-field sibling of :func:`render_evolution_multi._make_view`; *name* is
+    the output-stem suffix (``""`` wide, ``"zoom"`` close-up).
+    """
+    sub = f"rosseland_alpha_{name}" if name else "rosseland_alpha"
+    frames_dir = os.path.join(frames_root, sub)
+    os.makedirs(frames_dir, exist_ok=True)
+    return dict(name=name, box=box, res=res, zoom=zoom, scalebar_frac=scalebar_frac,
+                scalebar_label=scalebar_label, selection_fn=selection_fn,
+                frames_dir=frames_dir)
+
+
+def _zoom_views(args, box, elevation, frames_root, coords):
+    """The close-up view list for ``--zoom-rp`` (empty when off or not face-on).
+
+    Face-on only: the pencil-beam box preserves the full line-of-sight integral
+    only when the line of sight is z, and a truncated integral would no longer be
+    the optical depth.
+    """
+    if not args.zoom_rp:
+        return []
+    if abs(elevation - 90.0) > 1e-6:
+        print(f"[rosseland] --zoom-rp ignored: needs a face-on camera "
+              f"(elevation 90, got {elevation})", flush=True)
+        return []
+
+    r_p = movie_zoom.pericentre_radius(args.m_bh, args.m_star, args.r_star, args.beta)
+    half_width = args.zoom_rp * r_p
+    zbox = movie_zoom.pencil_box(box, half_width)
+    cam_zoom = movie_zoom.camera_zoom_for(zbox, 2.0 * half_width)
+    frac, label = movie_zoom.scalebar_in_rp(zbox, cam_zoom, r_p)
+    sel = functools.partial(movie_zoom.beam_selection, coords=coords,
+                            half_width=half_width)
+    return [_make_view("zoom", zbox, args.zoom_res or args.res, cam_zoom,
+                       frac if args.scalebar else None,
+                       label if args.scalebar else None,
+                       sel, frames_root)]
 
 
 def main(argv=None):
@@ -132,6 +183,13 @@ def main(argv=None):
     p.add_argument("--bh-frame", action="store_true")
     p.add_argument("--flip-x", action="store_true")
     p.add_argument("--no-annotate", action="store_true", help="Drop the time/snap label.")
+    p.add_argument("--zoom-rp", type=float, default=0.0,
+                   help="Also render a face-on close-up reaching this many r_p in x and y "
+                        "(e.g. 2.5); 0 = off.  Keeps the wide box's full line-of-sight "
+                        "extent, so tau stays a true optical depth and the wide colour "
+                        "limits still apply.  Face-on camera only.")
+    p.add_argument("--zoom-res", type=int, default=None,
+                   help="Interpolation resolution for the close-up (default: --res).")
     p.add_argument("--m-bh", type=float, default=1e4)
     p.add_argument("--m-star", type=float, default=0.5)
     p.add_argument("--r-star", type=float, default=0.47)
@@ -170,6 +228,15 @@ def main(argv=None):
         print(f"No snapshots found in {args.run_dir}", file=sys.stderr)
         return 1
 
+    # NPY snapshots store no time, so the label's "t = ... d" line needs the
+    # run-wide days-per-tfb factor; derive it once here (see render_evolution_multi).
+    days_per_tfb = args.days_per_tfb
+    if days_per_tfb is None:
+        from richio.render.evolution import _calibrate_days_per_tfb
+
+        days_per_tfb = _calibrate_days_per_tfb(snaps)
+    print(f"[rosseland] days_per_tfb = {days_per_tfb}", flush=True)
+
     # Scale bar sized to the tidal radius r_t = R*(M_BH/M*)^(1/3), as render_evolution.
     scalebar_frac = scalebar_label = None
     if args.scalebar:
@@ -179,16 +246,22 @@ def main(argv=None):
     os.makedirs(args.outdir, exist_ok=True)
     jid = os.environ.get("SLURM_JOB_ID", "local")
     frames_root = args.frames_root or os.path.abspath(f"/tmp/{args.tag}_{args.camera}_{jid}")
-    frames_dir = os.path.join(frames_root, "rosseland_alpha")
-    os.makedirs(frames_dir, exist_ok=True)
+
+    views = [_make_view("", box, args.res, args.zoom, scalebar_frac, scalebar_label,
+                        None, frames_root)]
+    views += _zoom_views(args, box, elevation, frames_root, coords)
+    for v in views:
+        print(f"[rosseland] view '{v['name'] or 'wide'}': "
+              f"box={[round(b, 2) for b in v['box']]} res={v['res']} "
+              f"camera_zoom={v['zoom']:.4f} bar={v['scalebar_label']}", flush=True)
 
     _CFG.update(dict(
         coords=coords, box=box, res=args.res, resolution=args.resolution,
         workers=args.workers, azimuth=azimuth, elevation=elevation, zoom=args.zoom,
         flip_x=args.flip_x, vmin=args.vmin, vmax=args.vmax,
         scalebar_frac=scalebar_frac, scalebar_label=scalebar_label,
-        annotate_time=(not args.no_annotate), days_per_tfb=args.days_per_tfb,
-        frames_dir=frames_dir,
+        annotate_time=(not args.no_annotate), days_per_tfb=days_per_tfb,
+        views=views,
     ))
 
     n = len(snaps)
@@ -210,9 +283,12 @@ def main(argv=None):
             _render_evolution_frame(t)
             print(f"[rosseland] frame {k + 1}/{n}", flush=True)
 
-    out = os.path.join(args.outdir, f"{args.tag}_{args.camera}_{args.box}.mp4")
-    _encode_movie(frames_dir, n, out, args.fps)
-    print(f"[rosseland] done -> {out}", flush=True)
+    for view in views:
+        suffix = f"_{view['name']}" if view["name"] else ""
+        out = os.path.join(args.outdir,
+                           f"{args.tag}_{args.camera}_{args.box}{suffix}.mp4")
+        _encode_movie(view["frames_dir"], n, out, args.fps)
+        print(f"[rosseland] done -> {out}", flush=True)
     if not args.keep_frames:
         _cleanup_frames(frames_root)
     return 0
