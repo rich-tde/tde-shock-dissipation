@@ -6,12 +6,11 @@ import numpy as np
 import unyt as u
 
 ################################################################################
-# Shock Tube helpers                                                           # 
+# Shock Tube helpers                                                           #
 ################################################################################
 
-def get_at_x(snap,
-           quantity, 
-           x):
+
+def get_at_x(snap, quantity, x):
     """
     Get quantity at x=indices by nearest neighbor, for 1D only.
     """
@@ -23,9 +22,10 @@ def get_at_x(snap,
     q_x0 = quantity[i]
     return q_x0
 
-def parse_gamma(snap_dir, default=5/3):
+
+def parse_gamma(snap_dir, default=5 / 3):
     """Parse ideal-gas gamma from path, or return default."""
-    m = re.search(r'Gamma([0-9.]+)', snap_dir)
+    m = re.search(r"Gamma([0-9.]+)", snap_dir)
     if m:
         try:
             return float(m.group(1))
@@ -35,6 +35,7 @@ def parse_gamma(snap_dir, default=5/3):
         f"Failed to parse gamma from directory {snap_dir}, using default={default}"
     )
     return default
+
 
 def parse_ic(
     snap_dir,
@@ -47,25 +48,21 @@ def parse_ic(
     Parse PL, PR, DL, DR from path, or return defaults.
     Requires full PL..PR..DL..DR match.
     """
-    m = re.search(
-        r'PL([0-9.]+)PR([0-9.]+)DL([0-9.]+)DR([0-9.]+)',
-        snap_dir
-    )
+    m = re.search(r"PL([0-9.]+)PR([0-9.]+)DL([0-9.]+)DR([0-9.]+)", snap_dir)
 
     if m:
         try:
-            P_L   = float(m.group(1))
-            P_R   = float(m.group(2))
+            P_L = float(m.group(1))
+            P_R = float(m.group(2))
             rho_L = float(m.group(3))
             rho_R = float(m.group(4))
             return P_L, P_R, rho_L, rho_R
         except ValueError:
             pass
-    
-    warnings.warn(
-        "No PL/PR/DL/DR block found in path, using sod shock defaults"
-    )
+
+    warnings.warn("No PL/PR/DL/DR block found in path, using sod shock defaults")
     return default_P_L, default_P_R, default_rho_L, default_rho_R
+
 
 def fetch_ic(
     snap_dir,
@@ -85,10 +82,10 @@ def fetch_ic(
     """
 
     files = {
-        "rho_L": ("leftdensity.txt",  default_rho_L),
+        "rho_L": ("leftdensity.txt", default_rho_L),
         "rho_R": ("rightdensity.txt", default_rho_R),
-        "P_L":   ("leftpressure.txt", default_P_L),
-        "P_R":   ("rightpressure.txt", default_P_R),
+        "P_L": ("leftpressure.txt", default_P_L),
+        "P_R": ("rightpressure.txt", default_P_R),
     }
 
     values = {}
@@ -99,18 +96,17 @@ def fetch_ic(
             with open(path, "r") as f:
                 values[key] = float(f.read().strip())
         except Exception:
-            warnings.warn(
-                f"Failed to read {fname}, using default={default}: {path}"
-            )
+            warnings.warn(f"Failed to read {fname}, using default={default}: {path}")
             values[key] = default
 
     return values["P_L"], values["P_R"], values["rho_L"], values["rho_R"]
+
 
 def get_shock_tube_front(x, diss, right=True):
     """Get shock front from max dissipation for 1D shock tube.
     Setting right=True gets only the right propagating shock.
     """
-    diss = diss.copy() # avoid modifying the original array
+    diss = diss.copy()  # avoid modifying the original array
     if right is True:
         diss[x.value < 0] = 0
     i_sh = np.argmax(diss)
@@ -119,18 +115,27 @@ def get_shock_tube_front(x, diss, right=True):
 
     return i_sh
 
+
 ################################################################################
 # Physical equations                                                           #
 ################################################################################
 
-def P_poisson(rho, P_ref, rho_ref, gamma=5/3):
+
+def P_poisson(rho, P_ref, rho_ref, gamma=5 / 3):
     return P_ref * (rho / rho_ref) ** gamma
 
-def P_hugoniot(rho, P_ref, rho_ref, gamma=5/3): # uses rho2, P2 as reference point
-    return P_ref * ((gamma + 1)*rho - (gamma - 1)*rho_ref) / ((gamma + 1)*rho_ref - (gamma - 1)*rho)
+
+def P_hugoniot(rho, P_ref, rho_ref, gamma=5 / 3):  # uses rho2, P2 as reference point
+    return (
+        P_ref
+        * ((gamma + 1) * rho - (gamma - 1) * rho_ref)
+        / ((gamma + 1) * rho_ref - (gamma - 1) * rho)
+    )
+
 
 def P_rayleigh(v, v1, v2, P1, P2):
     return P1 + (P2 - P1) * (v - v1) / (v2 - v1)
+
 
 def dp2s(rho, p):
     """
@@ -140,57 +145,24 @@ def dp2s(rho, p):
     Note: the Sackur-Tetrode equation as written here is only for 5/3 idea
     gas!
     """
-    gamma = 5/3
-    sie = p / (rho * (gamma - 1)) # specific internal energy
-    s = u.kb / u.mh * (
-        np.log(u.mh / rho * ((4*np.pi*u.mh**2*sie)/(3*u.h**2))**(3/2)) + 5/2
-        ) 
+    gamma = 5 / 3
+    sie = p / (rho * (gamma - 1))  # specific internal energy
+    s = (
+        u.kb
+        / u.mh
+        * (
+            np.log(u.mh / rho * ((4 * np.pi * u.mh**2 * sie) / (3 * u.h**2)) ** (3 / 2))
+            + 5 / 2
+        )
+    )
     return s
 
-def delta(M, gamma=5/3):
-    R = 1/((gamma - 1)/(gamma + 1) + 2/(gamma + 1)/M**2) # R = rho2/rho1
-    delta = 2/(gamma*(gamma - 1) * M**2 * R) * ((2*gamma*M**2 - (gamma - 1))/(gamma + 1) - R**gamma)
+
+def delta(M, gamma=5 / 3):
+    R = 1 / ((gamma - 1) / (gamma + 1) + 2 / (gamma + 1) / M**2)  # R = rho2/rho1
+    delta = (
+        2
+        / (gamma * (gamma - 1) * M**2 * R)
+        * ((2 * gamma * M**2 - (gamma - 1)) / (gamma + 1) - R**gamma)
+    )
     return delta
-
-def R2M(R, gamma=5/3):
-    """
-    Mach number from compression ratio rho2/rho1, using the RH condition.
-    """
-    return 1/np.sqrt((gamma + 1)/(2*R) - (gamma - 1)/2)
-# Alias
-rho2rho1M = R2M
-
-def M2R(M, gamma=5/3):
-    """
-    Compression ratio rho2/rho1 from Mach number, using the RH condition.
-    """
-    rho2rho1 = (gamma + 1)*M**2 / ((gamma - 1)*M**2 + 2)
-    return rho2rho1
-# Alias
-Mrho2rho1 = M2R
-
-def MT2T1(M, gamma=5/3):
-    """
-    Temperature jump ratio T2/T1 from Mach number, using the RH condition.
-    """
-    T2T1 = (2*gamma*M**2 - (gamma - 1)) * ((gamma - 1)*M**2 + 2) / ((gamma + 1)**2 * M**2)
-    return T2T1
-
-def MP2P1(M, gamma=5/3):
-    """
-    Pressure jump ratio P2/P1 from Mach number, using the RH condition.
-    """
-    P2P1 = (2*gamma*M**2)/(gamma + 1) - (gamma - 1)/(gamma + 1)
-    return P2P1
-
-def T2T1M(T2_T1, gamma):
-    """ Find mach number from the temperature jump (T2_T1). """
-    a = 2 * gamma * (gamma - 1)
-    minusb = gamma * 2 - 6 * gamma + T2_T1 * (gamma + 1)**2 + 1
-    M2 = (minusb + np.sqrt(minusb**2 + 8 * a * (gamma - 1))) / (2 * a)
-    return np.sqrt(M2)
-
-def P2P1M(P2_P1, gamma):
-    """ Find mach number from the pressure jump (P2_P1). """
-    M2 = (P2_P1 * (gamma + 1) + gamma - 1) / (2 * gamma)
-    return np.sqrt(M2)
