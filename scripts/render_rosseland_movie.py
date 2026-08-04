@@ -23,14 +23,14 @@ Example (face-on, box A)::
 """
 
 import argparse
-import functools
 import os
 import sys
 
 import numpy as np
 
-import movie_zoom  # pencil_box, camera_zoom_for, beam_selection
+import movie_zoom  # is_pencil, camera_zoom_for_box, box_selection
 import render_evolution  # BOX_PRESETS, find_snapshots, _scalebar_for_box
+import render_evolution_multi  # _index_map, _box_geometry
 import tde_frame  # make_bh_frame_loader
 import opacity_interpolator
 
@@ -96,7 +96,6 @@ def _render_evolution_frame(task):
     """
     from richio.render.evolution import _evolution_label
     import richio
-    import render_evolution_multi
 
     idx, path = task
     cfg = _CFG
@@ -134,33 +133,6 @@ def _make_view(name, box, res, zoom, scalebar_frac, scalebar_label, selection_fn
                 frames_dir=frames_dir)
 
 
-def _zoom_views(args, box, elevation, frames_root, coords):
-    """The close-up view list for ``--zoom-rp`` (empty when off or not face-on).
-
-    Face-on only: the pencil-beam box preserves the full line-of-sight integral
-    only when the line of sight is z, and a truncated integral would no longer be
-    the optical depth.
-    """
-    if not args.zoom_rp:
-        return []
-    if abs(elevation - 90.0) > 1e-6:
-        print(f"[rosseland] --zoom-rp ignored: needs a face-on camera "
-              f"(elevation 90, got {elevation})", flush=True)
-        return []
-
-    r_p = movie_zoom.pericentre_radius(args.m_bh, args.m_star, args.r_star, args.beta)
-    half_width = args.zoom_rp * r_p
-    zbox = movie_zoom.pencil_box(box, half_width)
-    cam_zoom = movie_zoom.camera_zoom_for(zbox, 2.0 * half_width)
-    frac, label = movie_zoom.scalebar_in_rp(zbox, cam_zoom, r_p)
-    sel = functools.partial(movie_zoom.beam_selection, coords=coords,
-                            half_width=half_width)
-    return [_make_view("zoom", zbox, args.zoom_res or args.res, cam_zoom,
-                       frac if args.scalebar else None,
-                       label if args.scalebar else None,
-                       sel, frames_root)]
-
-
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -183,13 +155,6 @@ def main(argv=None):
     p.add_argument("--bh-frame", action="store_true")
     p.add_argument("--flip-x", action="store_true")
     p.add_argument("--no-annotate", action="store_true", help="Drop the time/snap label.")
-    p.add_argument("--zoom-rp", type=float, default=0.0,
-                   help="Also render a face-on close-up reaching this many r_p in x and y "
-                        "(e.g. 2.5); 0 = off.  Keeps the wide box's full line-of-sight "
-                        "extent, so tau stays a true optical depth and the wide colour "
-                        "limits still apply.  Face-on camera only.")
-    p.add_argument("--zoom-res", type=int, default=None,
-                   help="Interpolation resolution for the close-up (default: --res).")
     p.add_argument("--m-bh", type=float, default=1e4)
     p.add_argument("--m-star", type=float, default=0.5)
     p.add_argument("--r-star", type=float, default=0.47)
@@ -237,23 +202,24 @@ def main(argv=None):
         days_per_tfb = _calibrate_days_per_tfb(snaps)
     print(f"[rosseland] days_per_tfb = {days_per_tfb}", flush=True)
 
-    # Scale bar sized to the tidal radius r_t = R*(M_BH/M*)^(1/3), as render_evolution.
-    scalebar_frac = scalebar_label = None
-    if args.scalebar:
-        r_t = args.r_star * (args.m_bh / args.m_star) ** (1.0 / 3.0)
-        scalebar_frac, scalebar_label = render_evolution._scalebar_for_box(box, args.zoom, r_t)
+    # Camera zoom, scale bar and cell pre-selection all follow from the box; a
+    # pencil box (preset C) is framed on its transverse extent, a cube is not
+    # touched.  Reuses the multi-field driver's helper so both stay in step.
+    args.elevation = elevation
+    cam_zoom, scalebar_frac, scalebar_label, selection_fn = (
+        render_evolution_multi._box_geometry(args, box, coords, tag="rosseland")
+    )
 
     os.makedirs(args.outdir, exist_ok=True)
     jid = os.environ.get("SLURM_JOB_ID", "local")
     frames_root = args.frames_root or os.path.abspath(f"/tmp/{args.tag}_{args.camera}_{jid}")
 
-    views = [_make_view("", box, args.res, args.zoom, scalebar_frac, scalebar_label,
-                        None, frames_root)]
-    views += _zoom_views(args, box, elevation, frames_root, coords)
+    views = [_make_view("", box, args.res, cam_zoom, scalebar_frac, scalebar_label,
+                        selection_fn, frames_root)]
     for v in views:
-        print(f"[rosseland] view '{v['name'] or 'wide'}': "
-              f"box={[round(b, 2) for b in v['box']]} res={v['res']} "
-              f"camera_zoom={v['zoom']:.4f} bar={v['scalebar_label']}", flush=True)
+        print(f"[rosseland] view: box={[round(b, 2) for b in v['box']]} res={v['res']} "
+              f"camera_zoom={v['zoom']:.4f} pencil={movie_zoom.is_pencil(v['box'])} "
+              f"bar={v['scalebar_label']}", flush=True)
 
     _CFG.update(dict(
         coords=coords, box=box, res=args.res, resolution=args.resolution,
@@ -275,8 +241,28 @@ def main(argv=None):
         import multiprocessing as mp
 
         ctx = mp.get_context("fork")
-        with ctx.Pool(processes=n_jobs) as pool:
-            for k, _ in enumerate(pool.imap_unordered(_render_evolution_frame, tasks)):
+        # maxtasksperchild=1 retires each worker after one frame, so peak RSS is
+        # one frame's worth rather than whatever the process has accumulated.
+        #
+        # The timeout is the important part.  When SLURM OOM-kills a worker,
+        # imap_unordered waits forever for a result that will never arrive: this
+        # driver has twice sat dead for 11 h and 31 h that way, burning walltime
+        # while looking exactly like slow progress.  Frames are resumable, so
+        # failing loudly and letting a re-submit continue is strictly better than
+        # hanging.  A frame takes minutes, so an hour of total silence is a death.
+        timeout = float(os.environ.get("FRAME_TIMEOUT", 3600))
+        with ctx.Pool(processes=n_jobs, maxtasksperchild=1) as pool:
+            it = pool.imap_unordered(_render_evolution_frame, tasks)
+            for k in range(len(tasks)):
+                try:
+                    it.next(timeout=timeout)
+                except mp.TimeoutError:
+                    pool.terminate()
+                    print(f"[rosseland] ABORT: no frame completed in {timeout:.0f}s after "
+                          f"{k}/{n} -- a worker was most likely OOM-killed. Frames on "
+                          f"disk are kept; re-submit to resume (lower NJOBS if it "
+                          f"recurs).", file=sys.stderr, flush=True)
+                    return 1
                 print(f"[rosseland] frame {k + 1}/{n}", flush=True)
     else:
         for k, t in enumerate(tasks):

@@ -19,11 +19,19 @@ import sys
 
 
 # Fixed boxes (R☉, code length): A is a cube around the origin, B is the wide
-# downstream/pericenter view.  Format is [x0, y0, z0, x1, y1, z1].
+# downstream/pericenter view, C the pericentre close-up.  [x0, y0, z0, x1, y1, z1].
+#
+# C is a PENCIL BEAM, not a cube: narrow in x/y but keeping B's full z depth, so a
+# face-on projection integrates the same complete column as the wide views and the
+# close-up is a true magnification rather than a thin slab (an optical depth
+# through a truncated slab is not the optical depth).  Its transverse half-width
+# is 2.75 r_p, so the default zoom of 1.1 frames exactly +-2.5 r_p
+# (r_p = r_t/beta = 12.758 R_sun for R*=0.47, M_BH=1e4, M*=0.5, beta=1).
+# Anisotropic boxes need `movie_zoom.camera_zoom_for_box` to be framed correctly.
 BOX_PRESETS = {
     "A": [-400.0, -400.0, -400.0, 400.0, 400.0, 400.0],
     "B": [-2000.0, -1400.0, -1400.0, 800.0, 1400.0, 1400.0],
-    "C": [-200.0, -200.0, -200.0, 200.0, 200.0, 200.0],  # ±200 cube close-up
+    "C": [-35.0, -35.0, -1400.0, 35.0, 35.0, 1400.0],
 }
 
 

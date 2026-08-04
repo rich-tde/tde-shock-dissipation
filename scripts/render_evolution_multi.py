@@ -245,31 +245,40 @@ def _make_view(name, box, res, zoom, scalebar_frac, scalebar_label, selection_fn
                 frames_dir=frames_dir)
 
 
-def _zoom_views(args, box, frames_root, fields, coords):
-    """The close-up view list for ``--zoom-rp`` (empty when off or not face-on).
+def _box_geometry(args, box, coords, tag="multi"):
+    """Camera zoom, scale bar and cell pre-selection implied by the *box* itself.
 
-    Restricted to face-on cameras: the pencil-beam box only preserves the wide
-    view's column integral when the line of sight is z, so a tilted camera would
-    silently produce a *different* quantity rather than a magnified one.
+    Cubes (presets A/B) come back exactly as before.  A pencil box (preset C, the
+    pericentre close-up) gets its zoom scaled so the camera frames the transverse
+    extent instead of the line of sight, a scale bar in ``r_p`` rather than
+    ``r_t``, and a transverse cell mask so its k-d tree is not built from all
+    ~57 M cells.  See :mod:`movie_zoom`.
     """
-    if not args.zoom_rp:
-        return []
-    if abs(args.elevation - 90.0) > 1e-6:
-        print(f"[multi] --zoom-rp ignored: needs a face-on camera "
-              f"(elevation 90, got {args.elevation})", flush=True)
-        return []
+    cam_zoom = movie_zoom.camera_zoom_for_box(box, args.zoom)
+    pencil = movie_zoom.is_pencil(box)
 
-    r_p = movie_zoom.pericentre_radius(args.m_bh, args.m_star, args.r_star, args.beta)
-    half_width = args.zoom_rp * r_p
-    zbox = movie_zoom.pencil_box(box, half_width)
-    cam_zoom = movie_zoom.camera_zoom_for(zbox, 2.0 * half_width)
-    frac, label = movie_zoom.scalebar_in_rp(zbox, cam_zoom, r_p)
-    sel = functools.partial(movie_zoom.beam_selection, coords=coords,
-                            half_width=half_width)
-    return [_make_view("zoom", zbox, args.zoom_res or args.res, cam_zoom,
-                       frac if args.scalebar else None,
-                       label if args.scalebar else None,
-                       sel, frames_root, fields)]
+    scalebar_frac = scalebar_label = None
+    if args.scalebar:
+        if pencil:
+            r_p = movie_zoom.pericentre_radius(args.m_bh, args.m_star, args.r_star,
+                                               args.beta)
+            scalebar_frac, scalebar_label = movie_zoom.scalebar_in_rp(box, cam_zoom, r_p)
+        else:
+            r_t = movie_zoom.tidal_radius(args.m_bh, args.m_star, args.r_star)
+            scalebar_frac, scalebar_label = render_evolution._scalebar_for_box(
+                box, cam_zoom, r_t
+            )
+
+    selection_fn = None
+    if pencil:
+        # The beam only reproduces the wide view's column when the line of sight
+        # is z; a tilted camera would show a long thin sliver, not a close-up.
+        if abs(args.elevation - 90.0) > 1e-6:
+            print(f"[{tag}] WARNING: pencil box with elevation={args.elevation} is not "
+                  f"face-on; the beam will be viewed edge-on.", flush=True)
+        selection_fn = functools.partial(movie_zoom.box_selection, coords=coords, box=box)
+
+    return cam_zoom, scalebar_frac, scalebar_label, selection_fn
 
 
 def _parse_aligned(s, fields, cast=str):
@@ -311,14 +320,6 @@ def main(argv=None):
     p.add_argument("--bh-frame", action="store_true")
     p.add_argument("--flip-x", action="store_true")
     p.add_argument("--no-annotate", action="store_true", help="Drop the time/snap label.")
-    p.add_argument("--zoom-rp", type=float, default=0.0,
-                   help="Also render a face-on close-up reaching this many r_p in x and y "
-                        "(e.g. 2.5); 0 = off.  The close-up keeps the wide box's full "
-                        "line-of-sight extent, so it is a true magnification sharing the "
-                        "wide colour limits.  Face-on cameras only (elevation 90).")
-    p.add_argument("--zoom-res", type=int, default=None,
-                   help="Interpolation resolution for the close-up (default: --res, which "
-                        "makes its z spacing identical to the wide grid's).")
     p.add_argument("--spin-frames", type=int, default=90)
     p.add_argument("--spin-angle", type=float, default=360.0)
     p.add_argument("--m-bh", type=float, default=1e4)
@@ -391,11 +392,9 @@ def main(argv=None):
         days_per_tfb = _calibrate_days_per_tfb(snaps)
     print(f"[multi] days_per_tfb = {days_per_tfb}", flush=True)
 
-    # Scale bar sized to the tidal radius r_t = R*(M_BH/M*)^(1/3), as render_evolution.
-    scalebar_frac = scalebar_label = None
-    if args.scalebar:
-        r_t = args.r_star * (args.m_bh / args.m_star) ** (1.0 / 3.0)
-        scalebar_frac, scalebar_label = render_evolution._scalebar_for_box(box, args.zoom, r_t)
+    cam_zoom, scalebar_frac, scalebar_label, selection_fn = _box_geometry(
+        args, box, coords, tag="multi"
+    )
 
     mask_fn = None
     if args.select == "wind":
@@ -408,13 +407,12 @@ def main(argv=None):
     jid = os.environ.get("SLURM_JOB_ID", "local")
     frames_root = args.frames_root or os.path.abspath(f"/tmp/{args.tag}_{jid}")
 
-    views = [_make_view("", box, args.res, args.zoom, scalebar_frac, scalebar_label,
-                        None, frames_root, fields)]
-    views += _zoom_views(args, box, frames_root, fields, coords)
+    views = [_make_view("", box, args.res, cam_zoom, scalebar_frac, scalebar_label,
+                        selection_fn, frames_root, fields)]
     for v in views:
-        print(f"[multi] view '{v['name'] or 'wide'}': box={[round(b, 2) for b in v['box']]} "
-              f"res={v['res']} camera_zoom={v['zoom']:.4f} bar={v['scalebar_label']}",
-              flush=True)
+        print(f"[multi] view: box={[round(b, 2) for b in v['box']]} res={v['res']} "
+              f"camera_zoom={v['zoom']:.4f} pencil={movie_zoom.is_pencil(v['box'])} "
+              f"bar={v['scalebar_label']}", flush=True)
 
     _CFG.update(dict(
         fields=fields, recipe=recipe, coords=coords, box=box, res=args.res,
@@ -450,8 +448,24 @@ def main(argv=None):
             import multiprocessing as mp
 
             ctx = mp.get_context("fork")
-            with ctx.Pool(processes=n_jobs) as pool:
-                for k, _ in enumerate(pool.imap_unordered(_render_evolution_frame, tasks)):
+            # maxtasksperchild=1 caps each worker's peak RSS at one frame's worth.
+            # The timeout guards the failure that actually bit us: an OOM-killed
+            # worker leaves imap_unordered waiting forever for a result that will
+            # never come (the sibling Rosseland driver sat dead for 31 h that way).
+            # Frames are resumable, so aborting loudly beats burning the walltime.
+            timeout = float(os.environ.get("FRAME_TIMEOUT", 3600))
+            with ctx.Pool(processes=n_jobs, maxtasksperchild=1) as pool:
+                it = pool.imap_unordered(_render_evolution_frame, tasks)
+                for k in range(len(tasks)):
+                    try:
+                        it.next(timeout=timeout)
+                    except mp.TimeoutError:
+                        pool.terminate()
+                        print(f"[multi] ABORT: no frame completed in {timeout:.0f}s after "
+                              f"{k}/{len(tasks)} -- a worker was most likely OOM-killed. "
+                              f"Frames on disk are kept; re-submit to resume (lower "
+                              f"NJOBS if it recurs).", file=sys.stderr, flush=True)
+                        return 1
                     print(f"[multi] evolution frame {k + 1}/{len(tasks)} "
                           f"(window [{evo_lo},{evo_hi}))", flush=True)
         else:
