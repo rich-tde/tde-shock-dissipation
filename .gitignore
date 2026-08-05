@@ -196,5 +196,6 @@ cython_debug/
 # Mine
 logs
 reports
+*.txt
 .vscode
 .claude
