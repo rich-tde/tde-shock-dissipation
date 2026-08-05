@@ -21,15 +21,15 @@ r_amin = Rstar * (Mbh / Mstar) ** (2 / 3)
 tmin = (
     np.pi / np.sqrt(2) * (Rstar**3 / u.G / Mstar) ** (1 / 2) * (Mbh / Mstar) ** (1 / 2)
 )
-Delta = u.G * Mbh / (4 * r_p) * Mstar
+Delta = u.G * Mbh / (4 * r_p) * Mstar / 2
 
 snapnums = []
 ts = []
 t_in_tmins = []
-Ediss_shock1s = []
-Ediss_shock2s = []
-Ediss_shock3s = []
-Ediss_shock4s = []
+Ediss1s = []
+Ediss2s = []
+Ediss3s = []
+Ediss4s = []
 
 snap_files = sorted(
     glob.glob(os.path.join(DATADIR, "snap_full_*.h5")),
@@ -52,27 +52,27 @@ for snap_file in snap_files[::NCADENCE]:
     shock4_cut = X < -r_a
 
     Ediss = snap.dissipation * snap.volume
-    Ediss_shock1 = np.sum(Ediss[shock1_cut])
-    Ediss_shock2 = np.sum(Ediss[shock2_cut])
-    Ediss_shock3 = np.sum(Ediss[shock3_cut])
-    Ediss_shock4 = np.sum(Ediss[shock4_cut])
+    Ediss1 = np.sum(Ediss[shock1_cut])
+    Ediss2 = np.sum(Ediss[shock2_cut])
+    Ediss3 = np.sum(Ediss[shock3_cut])
+    Ediss4 = np.sum(Ediss[shock4_cut])
 
     snapnums.append(snapnum)
     ts.append(t)
     t_in_tmins.append(t_in_tmin)
-    Ediss_shock1s.append(Ediss_shock1)
-    Ediss_shock2s.append(Ediss_shock2)
-    Ediss_shock3s.append(Ediss_shock3)
-    Ediss_shock4s.append(Ediss_shock4)
+    Ediss1s.append(Ediss1)
+    Ediss2s.append(Ediss2)
+    Ediss3s.append(Ediss3)
+    Ediss4s.append(Ediss4)
 
     print(
         snapnum,
         t,
         t_in_tmin,
-        Ediss_shock1 / Delta * tmin,
-        Ediss_shock2 / Delta * tmin,
-        Ediss_shock3 / Delta * tmin,
-        Ediss_shock4 / Delta * tmin,
+        Ediss1,
+        Ediss2,
+        Ediss3,
+        Ediss4,
     )
 
     u.savetxt(
@@ -81,9 +81,9 @@ for snap_file in snap_files[::NCADENCE]:
             u.unyt_array(snapnums),
             u.unyt_array(ts),
             u.unyt_array(t_in_tmins),
-            u.unyt_array(Ediss_shock1s) / Delta,
-            u.unyt_array(Ediss_shock2s) / Delta,
-            u.unyt_array(Ediss_shock3s) / Delta,
-            u.unyt_array(Ediss_shock4s) / Delta,
+            u.unyt_array(Ediss1s),
+            u.unyt_array(Ediss2s),
+            u.unyt_array(Ediss3s),
+            u.unyt_array(Ediss4s),
         ],
     )
