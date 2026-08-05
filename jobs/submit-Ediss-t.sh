@@ -13,4 +13,4 @@
 #SBATCH --mail-user="yujiehe@strw.leidenuniv.nl"
 #SBATCH --mail-type="ALL"
 
-/home/hey4/.conda/envs/richanalysis/bin/python /home/hey4/rich_tde/notebooks/shock-tde/Ediss-t.py --mode $SLURM_ARRAY_TASK_ID
+/home/hey4/.conda/envs/richanalysis/bin/python /home/hey4/rich_tde/works/shock-tde/Ediss-t.py --mode $SLURM_ARRAY_TASK_ID

@@ -20,7 +20,7 @@ Outputs (all under OUTPUT_DIR):
                                     plus the rich dissipation profile)
 
 Plotting of the dissipation-vs-t comparison lives in
-notebooks/shockstudy/1.2-sedov-dissipation-vs-t.ipynb so the look can be tuned
+works/shockstudy/1.2-sedov-dissipation-vs-t.ipynb so the look can be tuned
 without redoing the calculation.
 
 Run inside the richanalysis env:  python scripts/sedov_dissipation_scan.py
@@ -47,7 +47,10 @@ from richio import shockfinder as sf
 # INPUT_DIR, P0 = "/home/hey4/RICH/alice_data/raw/Sedov3DSpringel10", 1e-4  # 262k cells, E=1
 # INPUT_DIR, P0 = "/home/hey4/RICH/alice_data/raw/Sedov3D", (5 / 3 - 1) * 0.1  # 5M cells, E~3347, hot ambient (sie0=0.1)
 # INPUT_DIR, P0 = "/home/hey4/rich_tde/data/raw/Sedov3DSchaal15+", 1e-4  # 125k cells, E=1, longer run (to snap 332)
-INPUT_DIR, P0 = "/home/hey4/rich_tde/data/raw/Springel10+", 1e-4  # 262k cells, E=1, longer run (to snap 448)
+INPUT_DIR, P0 = (
+    "/home/hey4/rich_tde/data/raw/Springel10+",
+    1e-4,
+)  # 262k cells, E=1, longer run (to snap 448)
 SNAP_PATTERN = "sedov_*.h5"
 ONLY = None  # e.g. [750] to run a subset of snapshot numbers; None = all
 
@@ -145,7 +148,9 @@ for path in files:
     Ediss_cell = snap.dissipation * snap.volume
 
     # Total energy and the analytic Sedov quantities
-    E = np.sum(snap.sie * snap.density * snap.volume + snap.density * snap.volume * v2 / 2)
+    E = np.sum(
+        snap.sie * snap.density * snap.volume + snap.density * snap.volume * v2 / 2
+    )
     diss_rich = np.sum(Ediss_cell)
     diss_an = DISS_FRACTION * E / t
     R_an = (E / KAPPA / rho0) ** (1 / 5) * t ** (2 / 5)
@@ -170,7 +175,13 @@ for path in files:
     M_T = result.mach_T
     good = np.isfinite(M_T) & (M_T > 1)
     diss_sf = np.sum(
-        1 / 2 * rho0 * M_T[good] ** 3 * c0**3 * A_cell[good] * sf.delta(M_T[good], gamma=GAMMA)
+        1
+        / 2
+        * rho0
+        * M_T[good] ** 3
+        * c0**3
+        * A_cell[good]
+        * sf.delta(M_T[good], gamma=GAMMA)
     )
     area_sf = np.sum(A_cell)
     area_an = 4 * np.pi * R_an**2
@@ -178,8 +189,14 @@ for path in files:
         np.median(r_sim[result.surface_mask]) if n_surface > 0 else np.nan * R_an.units
     )
 
-    med = lambda M: float(np.median(M[np.isfinite(M)])) if np.isfinite(M).any() else np.nan
-    mach_T_med, mach_P_med, mach_rho_med = med(result.mach_T), med(result.mach_P), med(result.mach_rho)
+    med = lambda M: (
+        float(np.median(M[np.isfinite(M)])) if np.isfinite(M).any() else np.nan
+    )
+    mach_T_med, mach_P_med, mach_rho_med = (
+        med(result.mach_T),
+        med(result.mach_P),
+        med(result.mach_rho),
+    )
 
     cols["time"].append(t)
     cols["diss_rich"].append(diss_rich)
@@ -224,9 +241,15 @@ for path in files:
         )
         if an is not None:
             ax.plot(r_an_prof, an, color="k", lw=2, label="Sedov (L&L 106)")
-        ax.axvline(float(R_an.v), ls="--", color="gray", lw=1, label=r"$R_{\rm analytic}$")
-        ax.axvline(float(R_rich.v), ls=":", color="tomato", lw=1, label=r"$R_{\rm rich}$")
-        ax.axvline(float(R_sf.v), ls="-.", color="darkorange", lw=1, label=r"$R_{\rm sf}$")
+        ax.axvline(
+            float(R_an.v), ls="--", color="gray", lw=1, label=r"$R_{\rm analytic}$"
+        )
+        ax.axvline(
+            float(R_rich.v), ls=":", color="tomato", lw=1, label=r"$R_{\rm rich}$"
+        )
+        ax.axvline(
+            float(R_sf.v), ls="-.", color="darkorange", lw=1, label=r"$R_{\rm sf}$"
+        )
         ax.set_xlabel(f"r  [{r_sim.units}]")
         ax.set_ylabel(label)
         ax.set_xlim(0, float(snap.box[3].v))

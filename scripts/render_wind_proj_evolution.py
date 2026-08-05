@@ -2,7 +2,7 @@
 """Time-evolution movie of the unbound-wind density & dissipation projections.
 
 Reproduces the 3-plane column projections from
-``notebooks/windstudy/0.1-tde-wind.ipynb`` for *every* snapshot and stitches the
+``works/windstudy/0.1-tde-wind.ipynb`` for *every* snapshot and stitches the
 frames into a movie.  Each frame is a 2x3 panel:
 
 * **top row** density, **bottom row** dissipation;
@@ -75,9 +75,7 @@ def _masked_field(snap, field, mask):
 
 def _wind_mask(snap, coords):
     """Notebook ``wind_mask``: B>0 & v_r>0 (no cone / x-side cut)."""
-    return tde_frame.select_unbound_outflow(
-        snap, zr_max=None, x_sign=0, coords=coords
-    )
+    return tde_frame.select_unbound_outflow(snap, zr_max=None, x_sign=0, coords=coords)
 
 
 def _project_all(snap, fields, mask, coords, box, res, tree_workers, unit_system="cgs"):
@@ -148,8 +146,10 @@ def _fix_color_scale(ref_path, fields, coords, res, box, tree_workers, overrides
         pooled = np.concatenate([np.asarray(p).ravel() for _, p, _, _ in panels[field]])
         vmin, vmax = _log_range(pooled)
         ov = overrides.get(field, (None, None))
-        scales[field] = (ov[0] if ov[0] is not None else vmin,
-                         ov[1] if ov[1] is not None else vmax)
+        scales[field] = (
+            ov[0] if ov[0] is not None else vmin,
+            ov[1] if ov[1] is not None else vmax,
+        )
     return scales
 
 
@@ -157,6 +157,7 @@ def render_frame(args):
     """Render one snapshot's 2x3 panel to a PNG.  Reads config from ``_CFG``."""
     idx, path = args
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import richio
@@ -174,15 +175,22 @@ def render_frame(args):
     mask = _wind_mask(snap, coords)
     panels = _project_all(snap, fields, mask, coords, box, res, cfg["tree_workers"])
 
-    fig, axes = plt.subplots(len(fields), 3, figsize=(17, 4 * len(fields)),
-                             squeeze=False)
+    fig, axes = plt.subplots(
+        len(fields), 3, figsize=(17, 4 * len(fields)), squeeze=False
+    )
     for row, field in enumerate(fields):
         vmin, vmax = scales[field]
         for col, (plane, proj, xspace, yspace) in enumerate(panels[field]):
             ax = axes[row][col]
             scalar_map(
-                proj, xspace, yspace, ax=ax, cmap=cmaps[row],
-                label_latex=field, vmin=vmin, vmax=vmax,
+                proj,
+                xspace,
+                yspace,
+                ax=ax,
+                cmap=cmaps[row],
+                label_latex=field,
+                vmin=vmin,
+                vmax=vmax,
             )
             xl, yl = PLANE_LABELS[plane]
             ax.set_xlabel(xl)
@@ -206,37 +214,72 @@ def render_frame(args):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("run_dir", help="Run directory containing snap_<i>/ subdirs.")
-    p.add_argument("--start", type=int, default=21,
-                   help="First snapshot (default 21: first post-switch / BH-frame snap).")
+    p.add_argument(
+        "--start",
+        type=int,
+        default=21,
+        help="First snapshot (default 21: first post-switch / BH-frame snap).",
+    )
     p.add_argument("--end", type=int, default=151)
     p.add_argument("--step", type=int, default=1, help="Use every Nth snapshot.")
-    p.add_argument("--coords", default="CMx,CMy,CMz", help="Coordinate fields (comma-sep).")
+    p.add_argument(
+        "--coords", default="CMx,CMy,CMz", help="Coordinate fields (comma-sep)."
+    )
     p.add_argument("--res", type=int, default=512)
-    p.add_argument("--box-half", type=float, default=200.0,
-                   help="Symmetric cube half-width in code length units (notebook used "
-                        "200 and 30). Ignored when --box is given.")
-    p.add_argument("--box", default="",
-                   help="Explicit box 'x0,y0,z0,x1,y1,z1' (code length); overrides "
-                        "--box-half. Use equal extents per axis so pixels stay square.")
-    p.add_argument("--fields", default="density,dissipation",
-                   help="Comma-separated fields, one per row.")
-    p.add_argument("--cmaps", default="twilight,viridis",
-                   help="Comma-separated colormaps, one per field row.")
-    p.add_argument("--ref-index", type=int, default=-1,
-                   help="Index into the snapshot list used to fix the colour scale.")
-    p.add_argument("--vmin", default="",
-                   help="Per-field log10 vmin overrides, comma-sep aligned with --fields "
-                        "(blank entry = auto).")
-    p.add_argument("--vmax", default="", help="Per-field log10 vmax overrides (see --vmin).")
+    p.add_argument(
+        "--box-half",
+        type=float,
+        default=200.0,
+        help="Symmetric cube half-width in code length units (notebook used "
+        "200 and 30). Ignored when --box is given.",
+    )
+    p.add_argument(
+        "--box",
+        default="",
+        help="Explicit box 'x0,y0,z0,x1,y1,z1' (code length); overrides "
+        "--box-half. Use equal extents per axis so pixels stay square.",
+    )
+    p.add_argument(
+        "--fields",
+        default="density,dissipation",
+        help="Comma-separated fields, one per row.",
+    )
+    p.add_argument(
+        "--cmaps",
+        default="twilight,viridis",
+        help="Comma-separated colormaps, one per field row.",
+    )
+    p.add_argument(
+        "--ref-index",
+        type=int,
+        default=-1,
+        help="Index into the snapshot list used to fix the colour scale.",
+    )
+    p.add_argument(
+        "--vmin",
+        default="",
+        help="Per-field log10 vmin overrides, comma-sep aligned with --fields "
+        "(blank entry = auto).",
+    )
+    p.add_argument(
+        "--vmax", default="", help="Per-field log10 vmax overrides (see --vmin)."
+    )
     p.add_argument("--dpi", type=int, default=110)
     p.add_argument("--fps", type=int, default=24)
-    p.add_argument("--n-jobs", type=int, default=6, help="Forked frame workers (1 = serial).")
-    p.add_argument("--tree-workers", type=int, default=2,
-                   help="KDTree query threads per frame's single grid build "
-                        "(keep low: frames are already process-parallel via --n-jobs).")
+    p.add_argument(
+        "--n-jobs", type=int, default=6, help="Forked frame workers (1 = serial)."
+    )
+    p.add_argument(
+        "--tree-workers",
+        type=int,
+        default=2,
+        help="KDTree query threads per frame's single grid build "
+        "(keep low: frames are already process-parallel via --n-jobs).",
+    )
     p.add_argument("--out", default="wind_proj.mp4")
     p.add_argument("--frames-dir", default=None)
     p.add_argument("--keep-frames", action="store_true")
@@ -268,13 +311,17 @@ def main(argv=None):
             tok = tok.strip()
             out.append(float(tok) if tok else None)
         return out
+
     vmins = _parse_overrides(args.vmin) if args.vmin else [None] * len(fields)
     vmaxs = _parse_overrides(args.vmax) if args.vmax else [None] * len(fields)
-    overrides = {f: (vmins[i] if i < len(vmins) else None,
-                     vmaxs[i] if i < len(vmaxs) else None)
-                 for i, f in enumerate(fields)}
+    overrides = {
+        f: (vmins[i] if i < len(vmins) else None, vmaxs[i] if i < len(vmaxs) else None)
+        for i, f in enumerate(fields)
+    }
 
-    snaps = render_evolution.find_snapshots(args.run_dir, args.start, args.end)[:: args.step]
+    snaps = render_evolution.find_snapshots(args.run_dir, args.start, args.end)[
+        :: args.step
+    ]
     if not snaps:
         print(f"No snapshots found in {args.run_dir}", file=sys.stderr)
         return 1
@@ -286,17 +333,31 @@ def main(argv=None):
     os.makedirs(frames_dir, exist_ok=True)
 
     ref_path = snaps[args.ref_index]
-    print(f"[wind_proj] {len(snaps)} snapshots, box={box}, res={args.res}, "
-          f"fields={fields}, n_jobs={args.n_jobs}", flush=True)
+    print(
+        f"[wind_proj] {len(snaps)} snapshots, box={box}, res={args.res}, "
+        f"fields={fields}, n_jobs={args.n_jobs}",
+        flush=True,
+    )
     print(f"[wind_proj] fixing colour scale from {ref_path}", flush=True)
-    scales = _fix_color_scale(ref_path, fields, coords, args.res, box,
-                              args.tree_workers, overrides)
+    scales = _fix_color_scale(
+        ref_path, fields, coords, args.res, box, args.tree_workers, overrides
+    )
     for f in fields:
         print(f"[wind_proj]   {f}: log10 vmin/vmax = {scales[f]}", flush=True)
 
-    _CFG.update(dict(coords=coords, box=box, res=args.res, fields=fields,
-                     cmaps=cmaps, scales=scales, frames_dir=frames_dir, dpi=args.dpi,
-                     tree_workers=args.tree_workers))
+    _CFG.update(
+        dict(
+            coords=coords,
+            box=box,
+            res=args.res,
+            fields=fields,
+            cmaps=cmaps,
+            scales=scales,
+            frames_dir=frames_dir,
+            dpi=args.dpi,
+            tree_workers=args.tree_workers,
+        )
+    )
 
     work = list(enumerate(snaps))
     n_jobs = min(args.n_jobs, len(work))

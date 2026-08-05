@@ -12,7 +12,7 @@
 
 # Wind-projection evolution movie: per-snapshot 2x3 panels (density top,
 # dissipation bottom; xy/xz/yz columns) of the unbound wind (B>0 & v_r>0),
-# reproducing notebooks/windstudy/0.1-tde-wind.ipynb for every post-switch
+# reproducing works/windstudy/0.1-tde-wind.ipynb for every post-switch
 # snapshot.  Matplotlib column projections via snap.plots.projection.
 #
 # Parametrise via --export:
