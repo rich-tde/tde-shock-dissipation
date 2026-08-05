@@ -197,5 +197,4 @@ cython_debug/
 logs
 reports
 .vscode
-jobs
 .claude
