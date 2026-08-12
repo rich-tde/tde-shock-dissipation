@@ -20,9 +20,7 @@ def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
         DATADIRS = (
             "/data1/projects/pi-rossiem/TDE_data/NewSnellius/R0.47M0.5BH10000beta1S60ComptonHiRes",
         )
-        OUTPUT_FILE = (
-            "/home/hey4/rich_tde/data/processed/SimpleTimeseries/Ediss-t-1e4-final.txt"
-        )
+        OUTPUT_FILE = "/home/hey4/rich_tde/data/processed/SimpleTimeseries/E-t-1e4.txt"
         NCADENCE = 1
         Rstar = 0.47 * richio.units.lscale
         Mstar = 0.5 * richio.units.mscale
@@ -32,9 +30,7 @@ def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
         DATADIRS = (
             "/data1/projects/pi-rossiem/TDE_data/YujieSnellius/R0.47M0.5BH100000beta1S60n1.5ComptonHiResNewAMR",
         )
-        OUTPUT_FILE = (
-            "/home/hey4/rich_tde/data/processed/SimpleTimeseries/Ediss-t-1e5-final.txt"
-        )
+        OUTPUT_FILE = "/home/hey4/rich_tde/data/processed/SimpleTimeseries/E-t-1e5.txt"
         NCADENCE = 1
         Rstar = 0.47 * richio.units.lscale
         Mstar = 0.5 * richio.units.mscale
@@ -46,9 +42,7 @@ def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
             "/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE4",
             "/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE4_new",
         )
-        OUTPUT_FILE = (
-            "/home/hey4/rich_tde/data/processed/SimpleTimeseries/Ediss-t-1e6-final.txt"
-        )
+        OUTPUT_FILE = "/home/hey4/rich_tde/data/processed/SimpleTimeseries/E-t-1e6.txt"
         NCADENCE = 1
         Rstar = 1 * richio.units.lscale
         Mstar = 1 * richio.units.mscale
@@ -57,23 +51,23 @@ def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
         raise ValueError("Invalid mode. Please choose 1, 2, or 3.")
 
     r_amin = Rstar * (Mbh / Mstar) ** (2 / 3)
-    r_p = Rstar * (Mbh / Mstar) ** (1 / 3)
     tmin = (
         np.pi
         / np.sqrt(2)
         * (Rstar**3 / u.G / Mstar) ** (1 / 2)
         * (Mbh / Mstar) ** (1 / 2)
     )
-    # r_p = Rstar * (Mbh / Mstar) ** (1 / 3) * 1
-    # Delta = u.G * Mbh / (4 * r_p) * Mstar / 2
+    r_p = Rstar * (Mbh / Mstar) ** (1 / 3)
 
     snapnums = []
     ts = []
     tfbs = []
-    Ediss1s = []
-    Ediss2s = []
-    Ediss3s = []
-    Ediss4s = []
+    Eorbs = []
+    Erads = []
+    Eints = []
+    Egravs = []
+    Ekins = []
+    warned_zero_erad = False
 
     for dir in DATADIRS:
         logger.info(f"Processing directory: {dir}")
@@ -98,7 +92,7 @@ def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
                 snapnum = int(re.search(r"snap_(\d+)\.h5", snap_file).group(1))
 
             if (
-                os.path.basename(dir) == "TEMPTDE4" and snapnum >= 826
+                os.path.basename(dir) == "TEMPTDE4" and snapnum >= 820
             ):  # use hi-res restart of TEMPTDE4_new
                 continue
 
@@ -108,10 +102,11 @@ def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
             except IndexError:
                 t = snap.t
             tfb = t / tmin
-            if t < 0:
-                r_a = r_p
-            else:
-                r_a = r_amin * (tfb) ** (2 / 3)
+
+            # if t < 0:
+            #     r_a = r_p
+            # else:
+            #     r_a = r_amin * (tfb) ** (2 / 3)
 
             if mode == 3:
                 needs_switch = os.path.basename(dir) == "TEMPTDE"
@@ -126,29 +121,71 @@ def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
                 )
                 X = snap.X + x0[0]
                 Y = snap.Y + x0[1]
+                vx = snap.vx + x0[2]
+                vy = snap.vy + x0[3]
             else:
-                X, Y = snap.X, snap.Y
+                X = snap.X
+                Y = snap.Y
+                vx = snap.vx
+                vy = snap.vy
+            Z = snap.Z
+            vz = snap.vz
 
-            shock1_cut = X > 0
-            shock2_cut = (X > -r_a) & (X < 0) & (Y < 0)
-            shock3_cut = (X > -r_a) & (X < 0) & (Y > 0)
-            shock4_cut = X < -r_a
+            r = np.sqrt(X**2 + Y**2 + Z**2)
 
-            Ediss = snap.dissipation * snap.volume
-            Ediss1 = np.sum(Ediss[shock1_cut])
-            Ediss2 = np.sum(Ediss[shock2_cut])
-            Ediss3 = np.sum(Ediss[shock3_cut])
-            Ediss4 = np.sum(Ediss[shock4_cut])
+            r_g = u.G * Mbh / u.c**2
+
+            v2 = vx**2 + vy**2 + vz**2
+            rho = snap.density
+            V = snap.volume
+
+            r_0 = 0.6 * r_p
+            # smoothed PW
+            Egrav_i = np.where(
+                r > 0.6 * r_p,
+                -u.G * Mbh * rho * V / (r - 2 * r_g),
+                -u.G * Mbh * rho * V * r**2 / (2 * r_0 * (r_0 - 2 * r_g) ** 2),
+            )
+            Ekin_i = 1 / 2 * v2 * rho * V
+            Eorb_i = Ekin_i + Egrav_i
+            specific_Erad = snap.Erad
+            Erad_i = specific_Erad * V * rho
+            Eint_i = snap.sie * V * rho
+
+            Egrav = np.sum(Egrav_i)
+            Ekin = np.sum(Ekin_i)
+            Eorb = np.sum(Eorb_i)
+            Erad = np.sum(Erad_i)
+            Eint = np.sum(Eint_i)
+
+            if not warned_zero_erad and np.all(specific_Erad == 0):
+                logger.warning(
+                    "Erad is present but identically zero in {}; no stored "
+                    "radiation energy is available for this snapshot",
+                    snap_file,
+                )
+                warned_zero_erad = True
 
             snapnums.append(snapnum)
             ts.append(t)
             tfbs.append(tfb)
-            Ediss1s.append(Ediss1)
-            Ediss2s.append(Ediss2)
-            Ediss3s.append(Ediss3)
-            Ediss4s.append(Ediss4)
+            Eorbs.append(Eorb)
+            Erads.append(Erad)
+            Eints.append(Eint)
+            Egravs.append(Egrav)
+            Ekins.append(Ekin)
 
-            logger.info(f"{snapnum} {t} {tfb} {Ediss1} {Ediss2} {Ediss3} {Ediss4}")
+            logger.info(
+                "snapnum={} t={} tfb={} Eorb={} Erad={} Eint={} Egrav={} Ekin={}",
+                snapnum,
+                t,
+                tfb,
+                Eorb,
+                Erad,
+                Eint,
+                Egrav,
+                Ekin,
+            )
 
             u.savetxt(
                 OUTPUT_FILE,
@@ -156,13 +193,15 @@ def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
                     u.unyt_array(snapnums),
                     u.unyt_array(ts),
                     u.unyt_array(tfbs),
-                    u.unyt_array(Ediss1s),
-                    u.unyt_array(Ediss2s),
-                    u.unyt_array(Ediss3s),
-                    u.unyt_array(Ediss4s),
+                    u.unyt_array(Eorbs),
+                    u.unyt_array(Erads),
+                    u.unyt_array(Eints),
+                    u.unyt_array(Egravs),
+                    u.unyt_array(Ekins),
                 ],
-                header="SNAPNUM\tTIME\tTFALLBACK\tEDISS1\tEDISS2\tEDISS3\tEDISS4",
-                footer="shock1_cut = X > 0\nshock2_cut = (X > -r_a) & (X < 0) & (Y < 0)\nshock3_cut = (X > -r_a) & (X < 0) & (Y > 0)\nshock4_cut = X < -r_a",
+                header=(
+                    "SNAPNUM\tTIME\tTFALLBACK\tEORB\tERAD\tEINT\tEGRAV\tEKIN"
+                ),
             )
 
 

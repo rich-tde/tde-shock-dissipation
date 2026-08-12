@@ -1,9 +1,10 @@
+import os
 import re
 import warnings
-import os
 
 import numpy as np
 import unyt as u
+from scipy.integrate import solve_ivp
 
 ################################################################################
 # Shock Tube helpers                                                           #
@@ -166,3 +167,56 @@ def delta(M, gamma=5 / 3):
         * ((2 * gamma * M**2 - (gamma - 1)) / (gamma + 1) - R**gamma)
     )
     return delta
+
+
+################################################################################
+# Orbit / reference frame                                                      #
+################################################################################
+
+
+def _paczynski_orbit(t, state, GM, Rg):
+    x, y, vx, vy = state
+    r = np.hypot(x, y)
+    accel = -GM / (r * (r - Rg) ** 2)
+    return vx, vy, accel * x, accel * y
+
+
+def get_true_anomaly(t, Mbh, Rp):
+    """Integrate the Paczynski-Wiita orbit from pericenter to time t.
+
+    Mirrors GetTrueAnomaly in RICH's test.cpp. The star starts at pericenter
+    (Rp, 0) moving in -y; the returned (x, y, vx, vy) is the orbiting frame's
+    origin in the BH frame, as unyt quantities.
+
+    solve_ivp cannot carry unyt through the state vector, so we integrate in
+    cgs floats and reattach units on the way out.
+    """
+    GM = (u.G * Mbh).in_cgs()
+    Rg = (u.G * Mbh / u.c**2).in_cgs()
+    Rp = Rp.in_cgs()
+    t = t.in_cgs()
+    v_p = np.sqrt(2 * GM / (Rp - Rg))
+    state0 = [Rp.value, 0.0, 0.0, -v_p.value]
+    sol = solve_ivp(
+        _paczynski_orbit,
+        (0.0, t.value),
+        state0,
+        args=(GM.value, Rg.value),
+        method="RK45",
+        rtol=1e-8,
+        atol=1e-11,
+        first_step=t.value * 1e-5 if t.value > 0 else None,
+    )
+    x, y, vx, vy = sol.y[:, -1]
+    return x * u.cm, y * u.cm, vx * u.cm / u.s, vy * u.cm / u.s
+
+
+def reference_frame_offset(t, Mbh, Mstar, Rstar, beta):
+    """Offset (dx, dy, dvx, dvy) from the orbiting frame to the BH frame.
+
+    Add these to a snapshot's (X, Y, vx, vy) to place it in the
+    BH-centered frame. z and vz are unchanged since the orbit is planar.
+    """
+    Rt = Rstar * (Mbh / Mstar) ** (1 / 3)
+    Rp = Rt / beta
+    return get_true_anomaly(t, Mbh, Rp)
