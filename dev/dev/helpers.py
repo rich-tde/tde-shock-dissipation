@@ -169,6 +169,35 @@ def delta(M, gamma=5 / 3):
     return delta
 
 
+class TDEBasics:
+    """Frequently used scales for a tidal disruption event.
+
+    Parameters are unyt masses/radii and the dimensionless penetration
+    factor ``beta``.  The calculated quantities are available as attributes::
+
+        tde = TDEBasics(Mbh, Mstar, Rstar, beta=1)
+        tde.r_p
+        tde.r_a
+        tde.t_fb
+    """
+
+    def __init__(self, Mbh, Mstar, Rstar, beta=1):
+        self.Mbh = Mbh
+        self.Mstar = Mstar
+        self.Rstar = Rstar
+        self.beta = beta
+
+        self.r_t = Rstar * (Mbh / Mstar) ** (1 / 3)
+        self.r_p = self.r_t / beta
+        self.r_a = Rstar * (Mbh / Mstar) ** (2 / 3)
+        self.t_fb = (
+            np.pi
+            / np.sqrt(2)
+            * np.sqrt(Rstar**3 / (u.G * Mstar))
+            * np.sqrt(Mbh / Mstar)
+        )
+
+
 ################################################################################
 # Orbit / reference frame                                                      #
 ################################################################################
