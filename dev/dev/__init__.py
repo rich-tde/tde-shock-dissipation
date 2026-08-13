@@ -1,5 +1,5 @@
 from dev.helpers import *
-from .datapaths import DATAPATHS
+from .datapaths import DATAPATHS, SNAPSHOT_TFB
 
 import matplotlib.pyplot as plt
 from pathlib import Path
