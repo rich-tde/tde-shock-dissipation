@@ -152,9 +152,12 @@ def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
             Erad_i = specific_Erad * V * rho
             Eint_i = snap.sie * V * rho
 
-            Egrav = np.sum(Egrav_i)
             Ekin = np.sum(Ekin_i)
             Eorb = np.sum(Eorb_i)
+            # np.where may preserve Egrav_i in cgs time units.  Deriving the
+            # total from Eorb = Egrav + Ekin keeps all output energies in the
+            # same code-energy unit and guarantees exact budget closure.
+            Egrav = Eorb - Ekin
             Erad = np.sum(Erad_i)
             Eint = np.sum(Eint_i)
 
