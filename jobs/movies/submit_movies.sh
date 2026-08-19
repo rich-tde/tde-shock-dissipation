@@ -10,7 +10,7 @@
 #   bash jobs/submit_movies.sh all       # g2 + g3 + faceon
 #
 # Each render job uses the shared-index multi-field driver (jobs/render_multi.slurm
-# -> scripts/render_evolution_multi.py): ONE KDTree build per snapshot renders all 4
+# -> works/movies/render_evolution_multi.py): ONE KDTree build per snapshot renders all 4
 # fields (density, dissipation, temperature, bernoulli).  Colour limits are read from
 # reports/movies/color_ranges.json (produced by the `scan` case); if a label is
 # missing the field auto-scales.  Output movies:

@@ -22,13 +22,13 @@ import math
 
 import matplotlib
 matplotlib.use('Agg')
+import dev  # noqa: F401  # Configure local imports and the plotting style.
 import matplotlib.pyplot as plt
 import imageio.v2 as imageio
 import numpy as np
 import unyt as u
 
 import richio
-richio.plots.use_nice_style()
 
 LOG = logging.getLogger("make_gif")
 
@@ -249,4 +249,3 @@ def main(argv=None):
 
 if __name__ == '__main__':
     raise SystemExit(main())
-

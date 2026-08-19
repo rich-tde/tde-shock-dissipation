@@ -46,7 +46,7 @@ OUT="${OUTDIR}/wind_proj_${TAG}.mp4"
 
 echo "Host: $(hostname)  BOXHALF=$BOXHALF BOX=${BOX:-} VMIN=${VMIN:-} TAG=$TAG -> $OUT  Started: $(date)"
 
-$PY scripts/render_wind_proj_evolution.py "$RUN" \
+$PY works/movies/render_wind_proj_evolution.py "$RUN" \
     --start 21 --end 151 \
     --coords CMx,CMy,CMz \
     --res 512 \

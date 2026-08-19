@@ -32,7 +32,7 @@ OUT="reports/gifs/${name}.mp4"
 echo "Host: $(hostname)  MODE=$MODE BOX=$BOX ROT=$ROT  -> $OUT  Started: $(date)"
 
 # 63M-cell NPY snapshots are memory-heavy: keep workers modest.
-$PY scripts/render_evolution.py "$RUN" \
+$PY works/movies/render_evolution.py "$RUN" \
     --field density \
     --mode "$MODE" \
     --box "$BOX" \

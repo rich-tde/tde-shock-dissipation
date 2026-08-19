@@ -21,7 +21,7 @@ SNAP=/zfsstore/user/hey4/rich_tde/data/external/R0.47M0.5BH10000beta1S60ComptonH
 
 echo "Host: $(hostname)  CPUs: $(nproc)  Started: $(date)"
 
-$PY scripts/render_tde_movies.py "$SNAP" \
+$PY works/movies/render_tde_movies.py "$SNAP" \
     --field density \
     --res 256 \
     --resolution 1024 \

@@ -8,7 +8,7 @@
 # g2/g3 now use the shared-index multi-field driver (jobs/render_multi.slurm): one job
 # per box[/angle] renders all 4 fields from ONE KDTree index build per snapshot at
 # RES=1024 (was 4 separate single-field jobs at RES=224).  Colour limits are read from
-# CR_JSON (scripts/scan_color_range.py output); if absent, each field auto-scales.
+# CR_JSON (works/movies/scan_color_range.py output); if absent, each field auto-scales.
 set -euo pipefail
 cd /zfsstore/user/hey4/rich_tde
 S=jobs/render_evolution_v2.slurm        # legacy single-field driver (g1 still uses it)
@@ -17,7 +17,7 @@ FIELDS="density dissipation temperature bernoulli"
 # sbatch --export splits items on commas, so list-valued vars (FIELDS/VMINS/VMAXS)
 # use ';' as their delimiter; jobs/render_multi.slurm converts ';' -> ',' for the driver.
 FIELDS_SEMI="density;dissipation;temperature;bernoulli"
-CR_JSON="${CR_JSON:-reports/movies/color_ranges.json}"  # written by scripts/scan_color_range.py
+CR_JSON="${CR_JSON:-reports/movies/color_ranges.json}"  # written by works/movies/scan_color_range.py
 PY=/home/hey4/.conda/envs/richanalysis/bin/python
 
 sub() { sbatch --parsable --export=ALL,"$1" "$S" | xargs -I{} echo "  {}  $1"; }

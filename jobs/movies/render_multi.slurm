@@ -10,7 +10,7 @@
 #SBATCH --output=jobs/logs/vr_multi_%j.out
 #SBATCH --error=jobs/logs/vr_multi_%j.err
 
-# Multi-field, shared-index evolution-movie driver (scripts/render_evolution_multi.py).
+# Multi-field, shared-index evolution-movie driver (works/movies/render_evolution_multi.py).
 # Builds the geometry-only KDTree index ONCE per snapshot and projects every field
 # from it -> ~Nfield fewer tree builds and ~Nfield less HDF5 I/O than launching one
 # single-field job per field (the old render_evolution_v2.slurm path).  Fixed boxes
@@ -119,7 +119,7 @@ echo "Host: $(hostname)  FIELDS=$FIELDS BOX=$BOX AZ=$AZ EL=$EL RES=$RES RESOLUTI
 " NJOBS=$NJOBS WORKERS=$WORKERS SPIN=$SPINFRAMES FONT=$RICHIO_FONT_SCALE MODE=$MODE"\
 " frames[$FRAME_START,$FRAME_STOP) -> $OUTDIR/$NAME_TMPL  Started: $(date)"
 
-$PY scripts/render_evolution_multi.py "$RUN" \
+$PY works/movies/render_evolution_multi.py "$RUN" \
     --fields "$FIELDS" \
     --box "$BOX" \
     --azimuth "$AZ" \

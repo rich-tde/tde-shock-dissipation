@@ -10,7 +10,7 @@
 #SBATCH --output=jobs/logs/%x_%j.out
 #SBATCH --error=jobs/logs/%x_%j.err
 
-# Rosseland optical-depth colorbar-range study (scripts/scan_rosseland_range.py).
+# Rosseland optical-depth colorbar-range study (works/movies/scan_rosseland_range.py).
 # Pools tau = int alpha_ross dr over sampled snapshots x (box A/B) x (faceon/side)
 # and prints recommended fixed VMIN/VMAX per (box, camera).
 set -euo pipefail
@@ -28,7 +28,7 @@ WORKERS="${WORKERS:-24}"
 
 echo "Host: $(hostname)  SNAPS=$SNAPS RES=$RES  Started: $(date)"
 
-$PY scripts/scan_rosseland_range.py "$RUN" \
+$PY works/movies/scan_rosseland_range.py "$RUN" \
     --boxes A,B \
     --cameras faceon,side \
     --snaps "$SNAPS" \

@@ -32,6 +32,9 @@ import movie_zoom  # is_pencil, camera_zoom_for_box, box_selection
 import render_evolution  # BOX_PRESETS, find_snapshots, _scalebar_for_box
 import render_evolution_multi  # _index_map, _box_geometry
 import tde_frame  # make_bh_frame_loader
+
+# Opacity interpolation is a general analysis helper and remains under scripts/.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "scripts")))
 import opacity_interpolator
 
 #: Named camera presets (azimuth, elevation), matching scan_color_range.py /

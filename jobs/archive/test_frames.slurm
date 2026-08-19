@@ -29,7 +29,7 @@ VMINS="0.00024817,0.0969962,65066.4,-5"
 VMAXS="2.58966e+06,3.91509e+17,1.16836e+08,5"
 
 echo "Host: $(hostname)  Started: $(date)"
-/usr/bin/time -v $PY scripts/render_evolution_multi.py "$RUN" \
+/usr/bin/time -v $PY works/movies/render_evolution_multi.py "$RUN" \
     --fields density,dissipation,temperature,bernoulli \
     --box A --azimuth 45 --elevation 26 \
     --scalebar --bh-frame --flip-x --coords CMx,CMy,CMz \

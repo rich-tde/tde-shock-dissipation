@@ -36,7 +36,7 @@ RES="${RES:-512}"
 OUT="${OUT:-reports/movies/color_ranges.json}"
 
 echo "Host: $(hostname)  CAMERAS=$CAMERAS BOXES=$BOXES SNAPS=$SNAPS RES=$RES -> $OUT  Started: $(date)"
-$PY scripts/scan_color_range.py "$RUN" \
+$PY works/movies/scan_color_range.py "$RUN" \
     --boxes "$BOXES" --snaps "$SNAPS" --cameras "$CAMERAS" \
     --res "$RES" --resolution "$RES" --workers 48 --out "$OUT"
 echo "Finished: $(date)"

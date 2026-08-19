@@ -55,7 +55,7 @@ OUT="${OUTDIR}/${TAG}.mp4"
 echo "Host: $(hostname)  FIELD=$FIELD BOX=$BOX SELECT=${SELECT:-none} PLANE=${PLANE:-none} "\
 "AZ=${AZ:-45} EL=${EL:-26} SPIN=${SPINFRAMES:-90} -> $OUT  Started: $(date)"
 
-$PY scripts/render_evolution.py "$RUN" \
+$PY works/movies/render_evolution.py "$RUN" \
     --field "$FIELD" \
     --mode projection \
     --box "$BOX" \

@@ -29,7 +29,7 @@ OUT="reports/movies/${name}.mp4"
 
 echo "Host: $(hostname)  FIELD=$FIELD BOX=$BOX CMAP=$CMAP -> $OUT  Started: $(date)"
 
-$PY scripts/render_evolution.py "$RUN" \
+$PY works/movies/render_evolution.py "$RUN" \
     --field "$FIELD" \
     --mode projection \
     --box "$BOX" \

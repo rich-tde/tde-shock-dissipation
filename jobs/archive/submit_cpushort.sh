@@ -33,7 +33,7 @@ PART=(--partition=cpu-short --account=strw)
 FRAMEDIR_BASE=reports/movies/_frames
 
 # Number of evolution frames (snaps 21..151).
-N_EVO=$("$PY" -c "import sys; sys.path.insert(0,'scripts'); import render_evolution as r; print(len(r.find_snapshots('$RUN',21,151)))")
+N_EVO=$("$PY" -c "import sys; sys.path.insert(0,'works/movies'); import render_evolution as r; print(len(r.find_snapshots('$RUN',21,151)))")
 TOTAL=$((N_EVO + SPIN))
 echo "N_EVO=$N_EVO SPIN=$SPIN TOTAL=$TOTAL  CHUNK=$CHUNK NJOBS=$NJOBS WORKERS=$WORKERS MEM=$MEM"
 

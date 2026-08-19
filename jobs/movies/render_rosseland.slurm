@@ -10,7 +10,7 @@
 #SBATCH --output=jobs/logs/vr_rosseland_%j.out
 #SBATCH --error=jobs/logs/vr_rosseland_%j.err
 
-# Rosseland optical-depth movie: tau = int alpha_ross dr (scripts/render_rosseland_movie.py).
+# Rosseland optical-depth movie: tau = int alpha_ross dr (works/movies/render_rosseland_movie.py).
 # Single derived field (not stored on disk, not registered in richio) -- lighter
 # than the 4-field weighted conference-movie set (no weight cube), so the same
 # gpu_strw defaults as render_multi.slurm have headroom, not less.
@@ -67,7 +67,7 @@ echo "Host: $(hostname)  CAMERA=$CAMERA BOX=$BOX RES=$RES RESOLUTION=$RESOLUTION
 " NJOBS=$NJOBS WORKERS=$WORKERS FRAMES_ROOT=${FRAMES_ROOT:-/tmp} KEEP=$KEEP_FRAMES"\
 " -> $OUTDIR/${TAG}_${CAMERA}_${BOX}.mp4  Started: $(date)"
 
-$PY scripts/render_rosseland_movie.py "$RUN" \
+$PY works/movies/render_rosseland_movie.py "$RUN" \
     --camera "$CAMERA" \
     --box "$BOX" \
     --scalebar \

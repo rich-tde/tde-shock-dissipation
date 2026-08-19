@@ -8,7 +8,7 @@
 #   bash jobs/submit_rosseland.sh side     # roughly side-on (az0 el15) (2 jobs: A,B)
 #   bash jobs/submit_rosseland.sh both     # faceon + side              (5 jobs)
 #
-# Each job runs jobs/render_rosseland.slurm -> scripts/render_rosseland_movie.py.
+# Each job runs jobs/render_rosseland.slurm -> works/movies/render_rosseland_movie.py.
 # Output: reports/movies/rosseland/rosseland_<faceon|side>_<A|B|C>.mp4
 #
 # Tunables (env): RES RESOLUTION NJOBS WORKERS MEM TIME CPUS PARTITION ACCOUNT

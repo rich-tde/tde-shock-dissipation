@@ -27,7 +27,7 @@ OUT=reports/gifs/density_spin_70M.mp4
 
 echo "Host: $(hostname)  CPUs: $(nproc)  Started: $(date)"
 
-$PY scripts/render_volume_movie.py "$SNAP" \
+$PY works/movies/render_volume_movie.py "$SNAP" \
     --field density \
     --res 256 \
     --resolution 1024 \

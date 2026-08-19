@@ -48,7 +48,7 @@ OUT="${OUTDIR}/sel_${BOX}_${FIELD}.mp4"
 
 echo "Host: $(hostname)  FIELD=$FIELD BOX=$BOX SELECT=$SELECT -> $OUT  Started: $(date)"
 
-$PY scripts/render_evolution.py "$RUN" \
+$PY works/movies/render_evolution.py "$RUN" \
     --field "$FIELD" \
     --mode projection \
     --box "$BOX" \
