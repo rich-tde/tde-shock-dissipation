@@ -1,4 +1,80 @@
-# jobs/ — conference TDE movie pipeline
+# Face-on density movies for the presentation
+
+The current presentation workflow renders one face-on column-density movie for
+each of the `1e4`, `1e5`, and `1e6` black-hole-mass runs. It uses a fixed box in
+units of each run's `r_amin` and corrects only datasets that are still in the
+orbiting reference frame. Every frame and mass uses the fixed range
+`10^0.5`--`10^6.5 g cm^-2`: exactly six decades, with the ceiling rounded above
+the legacy `faceon_A` scan maximum. This removes colour-scale flashing.
+
+```bash
+# Required review run: 256 x 180 image plane, 128 sinh-spaced z intervals.
+bash jobs/movies/submit_faceon_density.sh preview
+
+# Do not run until the preview has been approved. This uses a 2048 x 1434
+# image plane, 256 sinh-spaced z intervals, and 300-DPI PNG output.
+bash jobs/movies/submit_faceon_density.sh production
+```
+
+Preview submissions use 32 CPUs and 120 GB on the four-hour `cpu-short`
+partition; production uses 64 CPUs and 240 GB on the seven-day `cpu-zen4`
+partition.
+
+The Slurm array maps modes 1, 2, and 3 to `1e4`, `1e5`, and `1e6`. Frames are
+restartable and are never removed automatically. Outputs are written to:
+
+```
+reports/movies/crete/<preview|production>/<mass>/
+├── frames/frame_*.png
+├── faceon_density_<mass>.mp4
+├── timeline.png                  # preview only
+├── window-comparison.png         # preview only
+└── window-examples/*.png         # preview only
+```
+
+The `1e4` window is `x/r_amin = [-2, 0.5]` and
+`y/r_amin = [-0.875, 0.875]`, preserving the standard image-plane aspect
+ratio. The `1e5` and `1e6` windows use `x/r_amin = [-1.5, 0.5]` and
+`y/r_amin = [-0.7, 0.7]`. All three use `z/r_amin = [-0.7, 0.7]`. The
+projection is not horizontally flipped. Frames
+reuse the established `richio.render` presentation layer: black canvas,
+linear-value log colorbar, time annotation, lower-left x/y/z orientation triad,
+and a `0.5 r_amin` scale bar. The black-hole mass is intentionally omitted for
+addition in post. Preview contact sheets also
+compare taller and wider alternatives. Playback averages 8 fps for `1e4`,
+16 fps for `1e5` (about 10 seconds total), and 24 fps for `1e6`.
+
+A small black point marks the BH at `(x,y)=(0,0)`. Before `0.3 t_fb`, cells
+with `tracers/Star < 0.99` are suppressed for the movie projection. The factor
+is `1e-8 * V_box/V_initial` (capped at one), compensating the simulation's
+inverse-box-volume ambient-density scaling so its projected color stays fixed
+below the displayed six-decade range.
+Set `AMBIENT_FACTOR` in the Slurm environment to change the factor at the
+initial `10^3` code-volume box.
+
+Movie encoding uses the physical `unyt` snapshot times. Each rendered snapshot
+is assigned a variable H.264 presentation duration proportional to the interval
+before the next snapshot, normalized to retain the intended total movie length.
+Thus sparse intervals freeze the preceding image longer while every available
+snapshot remains present; the encoder repeats the final image only to close its
+last presentation interval.
+
+Useful restart overrides can be passed through `sbatch --export`, including
+`FRAME_START`, `FRAME_STOP`, `NO_ENCODE=1`, `ENCODE_ONLY=1`, `NJOBS`, `WORKERS`,
+`VMAX`, and `OVERWRITE=1`. `VMAX` changes the shared ceiling while the lower
+limit remains exactly six decades below it. Encoding is attempted only when the
+requested window covers the complete movie, and it refuses to proceed if any
+frame is absent or empty.
+
+## Legacy multi-field conference pipeline
+
+The commands below describe the older fixed-box, four-field workflow. They are
+kept for reproducing its existing products, but they are not used for the three
+new presentation movies.
+
+---
+
+# jobs/ — legacy conference TDE movie pipeline
 
 One entry point drives everything: **`jobs/submit_movies.sh`**.
 
@@ -19,8 +95,8 @@ Colour limits come from `reports/movies/color_ranges.json` (run `scan` first).
 | Path | Role |
 |------|------|
 | `submit_movies.sh`   | **main entry** — submit the scan / g2 / g3 / faceon / all cases |
-| `render_multi.slurm` | render worker → `scripts/render_evolution_multi.py` (MODE=full/render/encode) |
-| `scan_color.slurm`   | colour-scan worker → `scripts/scan_color_range.py` |
+| `render_multi.slurm` | render worker → `works/movies/render_evolution_multi.py` (MODE=full/render/encode) |
+| `scan_color.slurm`   | colour-scan worker → `works/movies/scan_color_range.py` |
 | `logs/`              | all Slurm `*.out` / `*.err` |
 | `archive/`           | superseded / pre-conference scripts (kept for reference) |
 | `render_wind_proj.slurm`, `submit_wind_proj.sh` | separate wind-projection workflow (not the conference movies) |

@@ -74,6 +74,14 @@ def _snapshot_times(run):
     return snapnums, paths, np.asarray(times)
 
 
+def SNAPSHOT_TIMES(run):
+    """Return snapshot times as quantities in richio's code-time registry."""
+    import richio
+    from unyt import unyt_array
+
+    return unyt_array(_snapshot_times(run)[2].copy(), richio.units.tscale)
+
+
 def SNAPSHOT_TFB(run, tfb, warn_if=0.05):
     """Return ``(snapnum, path)`` closest to the requested ``t / t_fb``.
 
