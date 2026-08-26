@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render fixed-r_amin, face-on column-density movies for the three TDE runs.
+"""Render fixed-r_amin, face-on projection movies for the three TDE runs.
 
 The image plane is sampled densely while the line of sight uses a cheaper sinh
 grid concentrated around z=0.  All movies use one fixed six-decade colour range
@@ -32,7 +32,6 @@ from dev.datapaths import DATAPATHS, SNAPSHOT_TIMES, TDE_PARAMETERS
 REPO = Path("/home/hey4/rich_tde")
 OUTPUT_ROOT = REPO / "reports/movies/crete"
 COLOR_VMAX = 10.0**6.5  # rounded above the legacy faceon_A scan maximum (2.22e6)
-COLOR_LIMITS = (COLOR_VMAX / 1e6, COLOR_VMAX)
 AMBIENT_FACTOR = 1e-8
 AMBIENT_UNTIL_TFB = 0.3
 INITIAL_BOX_VOLUME = (10 * richio.units.lscale) ** 3
@@ -83,6 +82,18 @@ class Quality:
     canvas: tuple[int, int]
 
 
+@dataclass(frozen=True)
+class FieldConfig:
+    name: str
+    unit: str
+    label: str
+    cmap: str
+    vmax: float
+    decades: int
+    suppress_ambient: bool = False
+    floor_nonpositive: bool = False
+
+
 RUNS = {
     1: RunConfig(1, "1e4", *TDE_PARAMETERS["1e4"], fps=8),
     2: RunConfig(2, "1e5", *TDE_PARAMETERS["1e5"], fps=16),
@@ -92,6 +103,17 @@ QUALITIES = {
     "preview": Quality("preview", 256, 180, 128, 128, (1220, 720)),
     "production": Quality("production", 2048, 1434, 256, 300, (2440, 1434)),
 }
+FIELDS = {
+    "density": FieldConfig(
+        "density", "g/cm**2", r"Column density $[\mathrm{g/cm^2}]$",
+        "twilight", COLOR_VMAX, 6, suppress_ambient=True,
+    ),
+    "dissipation": FieldConfig(
+        "dissipation", "erg/s/cm**2",
+        r"Column dissipation $[\mathrm{erg/s/cm^2}]$", "viridis", 1e18, 4,
+        floor_nonpositive=True,
+    ),
+}
 
 
 def mode_settings(mode: int) -> RunConfig:
@@ -99,13 +121,6 @@ def mode_settings(mode: int) -> RunConfig:
         return RUNS[mode]
     except KeyError as exc:
         raise ValueError("mode must be 1 (1e4), 2 (1e5), or 3 (1e6)") from exc
-
-
-def snapshot_number(path: Path) -> int:
-    match = re.fullmatch(r"snap_(?:full_)?(\d+)\.h5", path.name)
-    if match is None:
-        raise ValueError(f"unrecognised snapshot name: {path.name}")
-    return int(match.group(1))
 
 
 def needs_reference_frame(run: str, path: Path) -> bool:
@@ -139,10 +154,12 @@ def grid_samples(quality: Quality) -> tuple[int, int, int]:
     return quality.nx + 1, quality.ny + 1, quality.nz + 1
 
 
-def six_decade_limits(vmax: float = COLOR_VMAX) -> tuple[float, float]:
+def color_limits(vmax: float, decades: int) -> tuple[float, float]:
     if not np.isfinite(vmax) or vmax <= 0:
         raise ValueError("vmax must be positive and finite")
-    return vmax / 1e6, vmax
+    if decades <= 0:
+        raise ValueError("decades must be positive")
+    return vmax / 10**decades, vmax
 
 
 def frame_complete(path: Path) -> bool:
@@ -193,7 +210,8 @@ def frame_durations(times, fps: int):
 
 
 def project_snapshot(path: Path, config: RunConfig, quality: Quality, window: str,
-                     workers: int, ambient_factor: float = AMBIENT_FACTOR):
+                     workers: int, field: FieldConfig,
+                     ambient_factor: float = AMBIENT_FACTOR):
     snap = richio.load(str(path))
     time = _time_scalar(snap)
     x, y, z = snap.X, snap.Y, snap.Z
@@ -208,10 +226,15 @@ def project_snapshot(path: Path, config: RunConfig, quality: Quality, window: st
         x = x + offset[0]
         y = y + offset[1]
 
-    density = projection_density(snap, time, config, ambient_factor)
+    data = getattr(snap, field.name)
+    if field.suppress_ambient:
+        data = projection_density(snap, time, config, ambient_factor)
+    elif field.floor_nonpositive:
+        data = data.copy()
+        data[(data < 0) | ~np.isfinite(data)] = 0
 
-    projected, xspace, yspace = snap.project(
-        density,
+    projected, _, _ = snap.project(
+        data,
         res=grid_samples(quality),
         X=x,
         Y=y,
@@ -222,19 +245,22 @@ def project_snapshot(path: Path, config: RunConfig, quality: Quality, window: st
         spacing=("linear", "linear", "sinh"),
         sinh_scale=(None, None, 0.1 * richio.units.lscale),
     )
-    return projected, xspace, yspace, time
+    return projected, time
 
 
-def render_projection(projected, xspace, yspace, time, config: RunConfig,
-                      quality: Quality, output: Path, window: str,
-                      vmax: float = COLOR_VMAX) -> None:
-    del xspace, yspace  # The fixed grid already encodes the physical extent.
-    vmin, vmax = six_decade_limits(vmax)
+def render_projection(projected, time, config: RunConfig, quality: Quality,
+                      field: FieldConfig, output: Path, window: str,
+                      vmax: float) -> None:
+    vmin, vmax = color_limits(vmax, field.decades)
+    if field.floor_nonpositive:
+        projected = projected.copy()
+        floor = u.unyt_quantity(vmin, field.unit).in_units(projected.units)
+        projected[(projected <= 0) | ~np.isfinite(projected)] = floor
     annotation = time_annotation(time, config)
     output.parent.mkdir(parents=True, exist_ok=True)
     richrender.projection_image(
-        projected, output, field="density", unit="g/cm**2",
-        label=r"Column density $[\mathrm{g/cm^2}]$", cmap="twilight",
+        projected, output, field=field.name, unit=field.unit,
+        label=field.label, cmap=field.cmap,
         norm="log", vmin=vmin, vmax=vmax, annotate=annotation,
         azimuth=0.0, elevation=-90.0, axis_triad=True, flip_x=False,
         scalebar_frac=0.25, scalebar_label=r"$0.5\,r_{\rm amin}$",
@@ -253,17 +279,16 @@ def _render_task(task) -> int:
     destination = state["frames_dir"] / f"frame_{index:05d}.png"
     if frame_complete(destination) and not state["overwrite"]:
         return index
-    projected, xspace, yspace, time = project_snapshot(
+    projected, time = project_snapshot(
         path, state["config"], state["quality"], state["window"], state["workers"],
-        state["ambient_factor"],
+        state["field"], state["ambient_factor"],
     )
     render_projection(
         projected,
-        xspace,
-        yspace,
         time,
         state["config"],
         state["quality"],
+        state["field"],
         destination,
         state["window"],
         state["vmax"],
@@ -286,9 +311,10 @@ def _contact_sheet(paths: list[Path], titles: list[str], output: Path) -> None:
     plt.close(fig)
 
 
-def make_preview_examples(config: RunConfig, quality: Quality, snapnums, paths,
-                          frames_dir: Path, output_dir: Path, workers: int,
-                          overwrite: bool, vmax: float, ambient_factor: float) -> None:
+def make_preview_examples(config: RunConfig, quality: Quality, field: FieldConfig,
+                          snapnums, paths, frames_dir: Path, output_dir: Path,
+                          workers: int, overwrite: bool, vmax: float,
+                          ambient_factor: float) -> None:
     indices = [0, len(paths) // 2, len(paths) - 1]
     _contact_sheet(
         [frames_dir / f"frame_{index:05d}.png" for index in indices],
@@ -304,12 +330,11 @@ def make_preview_examples(config: RunConfig, quality: Quality, snapnums, paths,
         comparison_paths.append(destination)
         if frame_complete(destination) and not overwrite:
             continue
-        projected, xspace, yspace, time = project_snapshot(
-            paths[middle], config, quality, window, workers, ambient_factor
+        projected, time = project_snapshot(
+            paths[middle], config, quality, window, workers, field, ambient_factor
         )
         render_projection(
-            projected, xspace, yspace, time, config, quality,
-            destination, window, vmax
+            projected, time, config, quality, field, destination, window, vmax
         )
     _contact_sheet(
         comparison_paths,
@@ -321,13 +346,14 @@ def make_preview_examples(config: RunConfig, quality: Quality, snapnums, paths,
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", type=int, required=True, choices=RUNS)
+    parser.add_argument("--field", choices=FIELDS, default="density")
     parser.add_argument("--quality", choices=QUALITIES, default="preview")
     parser.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
     parser.add_argument("--frame-start", type=int, default=0)
     parser.add_argument("--frame-stop", type=int, default=-1)
     parser.add_argument("--n-jobs", type=int, default=1)
     parser.add_argument("--workers", type=int, default=8)
-    parser.add_argument("--vmax", type=float, default=COLOR_VMAX)
+    parser.add_argument("--vmax", type=float)
     parser.add_argument("--ambient-factor", type=float, default=AMBIENT_FACTOR)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no-encode", action="store_true")
@@ -340,10 +366,13 @@ def main(argv=None) -> int:
     args = parse_args(argv)
     config = mode_settings(args.mode)
     quality = QUALITIES[args.quality]
+    field = FIELDS[args.field]
+    vmax = field.vmax if args.vmax is None else args.vmax
     snapnums, paths = DATAPATHS(config.run)
     paths = [Path(path) for path in paths]
     output_dir = args.output_root / quality.name / config.run
-    frames_dir = output_dir / "frames"
+    field_dir = output_dir if field.name == "density" else output_dir / field.name
+    frames_dir = field_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
     start = max(0, args.frame_start)
@@ -352,7 +381,7 @@ def main(argv=None) -> int:
     print(
         f"[{config.run}] {len(paths)} total snapshots; rendering [{start}, {stop}) "
         f"at {quality.nx}x{quality.ny}x{quality.nz}; fps={config.fps}; "
-        f"r_amin={config.r_amin:.6g}",
+        f"field={field.name}; r_amin={config.r_amin:.6g}",
         flush=True,
     )
 
@@ -360,11 +389,12 @@ def main(argv=None) -> int:
         _WORKER_STATE.update(
             config=config,
             quality=quality,
+            field=field,
             window="proposed",
             workers=args.workers,
             frames_dir=frames_dir,
             overwrite=args.overwrite,
-            vmax=args.vmax,
+            vmax=vmax,
             ambient_factor=args.ambient_factor,
         )
         jobs = min(args.n_jobs, max(1, len(tasks)))
@@ -383,11 +413,11 @@ def main(argv=None) -> int:
     complete_run = start == 0 and stop == len(paths)
     if quality.name == "preview" and complete_run and not args.no_examples:
         make_preview_examples(
-            config, quality, snapnums, paths, frames_dir, output_dir,
-            args.workers, args.overwrite, args.vmax, args.ambient_factor
+            config, quality, field, snapnums, paths, frames_dir, field_dir,
+            args.workers, args.overwrite, vmax, args.ambient_factor
         )
     if not args.no_encode and complete_run:
-        movie = output_dir / f"faceon_density_{config.run}.mp4"
+        movie = field_dir / f"faceon_{field.name}_{config.run}.mp4"
         durations = frame_durations(SNAPSHOT_TIMES(config.run), config.fps)
         richrender.encode_movie(
             frames_dir, len(paths), movie, config.fps, durations=durations

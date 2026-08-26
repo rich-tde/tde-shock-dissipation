@@ -1,0 +1,18 @@
+#!/bin/bash
+#SBATCH --partition=gpu_strw
+#SBATCH --account=gpu_strw
+#SBATCH --job-name=Ediss-t-4reg
+#SBATCH --array=1-3
+#SBATCH --time=3-00:00:00
+#SBATCH --output=/home/hey4/rich_tde/jobs/logs/%j_%x.out
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=30G
+#SBATCH --mail-user="yujiehe@strw.leidenuniv.nl"
+#SBATCH --mail-type="ALL"
+
+/home/hey4/.conda/envs/richanalysis/bin/python \
+    /home/hey4/rich_tde/works/shock-tde/Ediss-t-four-regions.py \
+    --mode "$SLURM_ARRAY_TASK_ID" \
+    --npoints 10

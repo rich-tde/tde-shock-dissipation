@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --partition=cpu-short
 #SBATCH --account=strw
-#SBATCH --job-name=nozzle-zoom-slices
+#SBATCH --job-name=nozzle-yz-slices
 #SBATCH --array=1-3
 
 #SBATCH --time=4:00:00
@@ -18,7 +18,7 @@ export OMP_NUM_THREADS=1
 
 cd /home/hey4/rich_tde || exit 1
 /home/hey4/.conda/envs/richanalysis/bin/python \
-    /home/hey4/rich_tde/works/shock-tde/nozzle-zoom-slices.py \
+    /home/hey4/rich_tde/works/shock-tde/nozzle-yz-slices.py \
     --mode "${SLURM_ARRAY_TASK_ID}" \
     --workers "${SLURM_CPUS_PER_TASK}" \
     --rerender

@@ -2,9 +2,9 @@
 
 This is the batch version of ``works/shocktubes/0.1-nozzle-dissipation-check.ipynb``.
 For every snapshot it applies the notebook's current default selection in the
-BH-centred frame: find the maximum-dissipation-density cell, keep cells within
-+/-4.5 degrees of its longitude, and require r < 1100 Schwarzschild radii.  No
-stellar-debris mask is applied.
+BH-centred frame: first require the stellar tracer to exceed 0.99, find the
+maximum-dissipation-density cell within that material, keep cells within +/-4.5
+degrees of its longitude, and require r < 1100 Schwarzschild radii.
 
 Two dimensionless diagnostics are evaluated on that one shared selection:
 
@@ -35,12 +35,12 @@ from dev.datapaths import DATAPATHS, TDE_PARAMETERS
 app = typer.Typer(add_completion=False)
 OUTPUT_ROOT = Path(
     "/home/hey4/rich_tde/data/processed/NozzleDissipationComparison/"
-    "max-dissipation-nozzle"
+    "max-dissipation-nozzle-star-0.99"
 )
 RUN_BY_MODE = {1: "1e4", 2: "1e5", 3: "1e6"}
 ANGULAR_HALF_WIDTH_DEG = 4.5
 RADIAL_LIMIT_RS = 1100.0
-STAR_ONLY = False
+STAR_MIN = 0.99
 
 
 def scalar_time(snap):
@@ -171,11 +171,9 @@ def analyse_snapshot(run: str, snapnum: int, snapshot_path: Path):
         snap, run, snapshot_path, scales
     )
 
-    keep = (
-        np.asarray(snap.mask_star_ratio(), dtype=bool)
-        if STAR_ONLY
-        else np.ones(len(snap), dtype=bool)
-    )
+    keep = np.asarray(snap.star > STAR_MIN, dtype=bool)
+    if not np.any(keep):
+        raise ValueError(f"No cells have star tracer > {STAR_MIN} in {snapshot_path}")
     cell_mass = (snap.density * snap.volume)[keep]
     speed_squared = vx[keep] ** 2 + vy[keep] ** 2 + vz[keep] ** 2
     kinetic_energy = 0.5 * cell_mass * speed_squared
@@ -232,7 +230,7 @@ def analyse_snapshot(run: str, snapnum: int, snapshot_path: Path):
         "time_tfb": float((time / fallback_time).to_value("dimensionless")),
         "frame_switched": frame_switched,
         "n_cells": len(snap),
-        "star_only": STAR_ONLY,
+        "star_min": STAR_MIN,
         "n_kept": int(keep.sum()),
         "n_nozzle": int(nozzle_selection.sum()),
         "selection_valid": selection_valid,

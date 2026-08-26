@@ -1,15 +1,22 @@
-# Face-on density movies for the presentation
+# Face-on projection movies for the presentation
 
-The current presentation workflow renders one face-on column-density movie for
-each of the `1e4`, `1e5`, and `1e6` black-hole-mass runs. It uses a fixed box in
+The current presentation workflow renders face-on density or dissipation movies
+for each of the `1e4`, `1e5`, and `1e6` black-hole-mass runs. It uses a fixed box in
 units of each run's `r_amin` and corrects only datasets that are still in the
 orbiting reference frame. Every frame and mass uses the fixed range
 `10^0.5`--`10^6.5 g cm^-2`: exactly six decades, with the ceiling rounded above
 the legacy `faceon_A` scan maximum. This removes colour-scale flashing.
+Dissipation uses viridis and `10^14`--`10^18 erg s^-1 cm^-2`: four fixed
+decades with the ceiling rounded above the established face-on scan maximum.
+Negative or non-finite dissipation cells are zeroed before projection; non-positive
+projected pixels are drawn at the viridis colorbar floor.
 
 ```bash
 # Required review run: 256 x 180 image plane, 128 sinh-spaced z intervals.
 bash jobs/movies/submit_faceon_density.sh preview
+
+# Dissipation preview; inspect and approve before production.
+bash jobs/movies/submit_faceon_density.sh preview dissipation
 
 # Do not run until the preview has been approved. This uses a 2048 x 1434
 # image plane, 256 sinh-spaced z intervals, and 300-DPI PNG output.
@@ -27,6 +34,9 @@ restartable and are never removed automatically. Outputs are written to:
 reports/movies/crete/<preview|production>/<mass>/
 ├── frames/frame_*.png
 ├── faceon_density_<mass>.mp4
+├── dissipation/
+│   ├── frames/frame_*.png
+│   └── faceon_dissipation_<mass>.mp4
 ├── timeline.png                  # preview only
 ├── window-comparison.png         # preview only
 └── window-examples/*.png         # preview only
@@ -44,7 +54,7 @@ addition in post. Preview contact sheets also
 compare taller and wider alternatives. Playback averages 8 fps for `1e4`,
 16 fps for `1e5` (about 10 seconds total), and 24 fps for `1e6`.
 
-A small black point marks the BH at `(x,y)=(0,0)`. Before `0.3 t_fb`, cells
+A small black point marks the BH at `(x,y)=(0,0)`. For density only, before `0.3 t_fb`, cells
 with `tracers/Star < 0.99` are suppressed for the movie projection. The factor
 is `1e-8 * V_box/V_initial` (capped at one), compensating the simulation's
 inverse-box-volume ambient-density scaling so its projected color stays fixed

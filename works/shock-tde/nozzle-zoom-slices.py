@@ -3,7 +3,8 @@
 
 The snapshot selection exactly follows ``0.1-plot-Ediss-distribution.ipynb``.
 Each run uses common colour limits across its selected snapshots.  Interpolated
-logarithmic grids are cached so interrupted Slurm jobs can resume cheaply.
+logarithmic grids and in-plane velocities are cached so interrupted Slurm jobs
+can resume cheaply.  Density panels include velocity streamlines.
 """
 
 from __future__ import annotations
@@ -118,10 +119,15 @@ def cache_complete(path: Path, resolution: int) -> bool:
         return False
     try:
         with np.load(path) as data:
-            return all(
+            fields_complete = all(
                 name in data and data[name].shape == (resolution, resolution)
                 for name, *_ in FIELDS
             )
+            flow_complete = all(
+                name in data and data[name].shape == (resolution, resolution)
+                for name in ("vx_kms", "vy_kms")
+            )
+            return fields_complete and flow_complete
     except (OSError, ValueError):
         return False
 
@@ -169,6 +175,8 @@ def cache_snapshot(
     for output_name, attribute, *_ in FIELDS:
         field = getattr(snap, attribute)[indices].in_cgs()
         arrays[output_name] = positive_log10(field)
+    arrays["vx_kms"] = snap.vx[indices].to_value("km/s")
+    arrays["vy_kms"] = snap.vy[indices].to_value("km/s")
 
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(".tmp")
@@ -211,8 +219,9 @@ def render_figure(
     with np.load(cache_path) as data:
         x_rp = data["x_rp"]
         y_rp = data["y_rp"]
-        time_tfb = float(data["time_tfb"])
         grids = {name: np.array(data[name]) for name, *_ in FIELDS}
+        vx_kms = np.array(data["vx_kms"])
+        vy_kms = np.array(data["vy_kms"])
 
     fig, axes = plt.subplots(2, 2, figsize=(10.6, 9.0), sharex=True, sharey=True)
     for ax, (name, _, title, colorbar_label, cmap_name) in zip(axes.flat, FIELDS):
@@ -232,18 +241,23 @@ def render_figure(
         ax.set_title(title)
         ax.set_xlim(WINDOW[:2])
         ax.set_ylim(WINDOW[2:])
+        if name == "density":
+            ax.streamplot(
+                x_rp,
+                y_rp,
+                vx_kms.T,
+                vy_kms.T,
+                color="white",
+                density=1.2,
+                linewidth=0.5,
+                arrowsize=0.7,
+            )
 
     for ax in axes[-1, :]:
         ax.set_xlabel(r"$x/r_p$")
     for ax in axes[:, 0]:
         ax.set_ylabel(r"$y/r_p$")
 
-    last_label = ", last snapshot" if is_last else ""
-    exponent = int(round(math.log10(config.m_bh)))
-    fig.suptitle(
-        rf"$M_{{\rm BH}}=10^{{{exponent}}}\,M_\odot$, snap {snapnum}, "
-        rf"$t/t_{{\rm fb}}={time_tfb:.3f}${last_label}"
-    )
     fig.tight_layout()
     destination.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(destination, dpi=dpi)
