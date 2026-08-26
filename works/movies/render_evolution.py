@@ -87,59 +87,118 @@ def find_snapshots(run_dir, start, end):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("run_dir", help="Run directory containing snap_<i>/ subdirs.")
     p.add_argument("--field", default="density")
     p.add_argument("--mode", default="projection", choices=["projection", "volume"])
-    p.add_argument("--weight", default=None,
-                   help="Projection weight field (e.g. density for a weighted mean; "
-                        "use for intensive fields like temperature).")
-    p.add_argument("--box", default="wide", choices=["wide", "disk", "A", "B", "C"],
-                   help="wide/disk derive a box from the data; A/B/C are fixed boxes "
-                        "(A=cube +-400, B=x[-2000,800] y,z[-1400,1400], C=cube +-200, R_sun).")
-    p.add_argument("--select", default="none", choices=["none", "wind"],
-                   help="'wind' renders only the unbound disc-plane wind: B>0 & v_r>0 & "
-                        "|z|/r<=--cone-zr (cells zeroed elsewhere).")
-    p.add_argument("--cone-zr", type=float, default=0.5,
-                   help="Equatorial-wedge cut |z|/r for --select wind (0.5 = +-30 deg of xy).")
-    p.add_argument("--plane", default="none", choices=["none", "xy", "xz", "yz"],
-                   help="Exact axis-aligned line-of-sight projection (integrate along the third "
-                        "axis): xy=top-down, xz=along y, yz=along x. Forces no rotation.")
-    p.add_argument("--scalebar", action="store_true",
-                   help="Draw a map-style scale bar of ~n*r_t (fixed boxes only).")
-    p.add_argument("--spin-tfb", default="",
-                   help="Comma-separated t_fb times to pause and spin 360 (e.g. 0.5,1.0,1.5). "
-                        "Empty keeps the single trailing spin.")
-    p.add_argument("--final-turns", type=int, default=1,
-                   help="Full turns at the final snapshot when --spin-tfb is set.")
-    p.add_argument("--box-field", default=None,
-                   help="Field defining the auto box (default: --field). "
-                        "E.g. density to match a density movie's framing.")
+    p.add_argument(
+        "--weight",
+        default=None,
+        help="Projection weight field (e.g. density for a weighted mean; "
+        "use for intensive fields like temperature).",
+    )
+    p.add_argument(
+        "--box",
+        default="wide",
+        choices=["wide", "disk", "A", "B", "C"],
+        help="wide/disk derive a box from the data; A/B/C are fixed boxes "
+        "(A=cube +-400, B=x[-2000,800] y,z[-1400,1400], C=cube +-200, R_sun).",
+    )
+    p.add_argument(
+        "--select",
+        default="none",
+        choices=["none", "wind"],
+        help="'wind' renders only the unbound disc-plane wind: B>0 & v_r>0 & "
+        "|z|/r<=--cone-zr (cells zeroed elsewhere).",
+    )
+    p.add_argument(
+        "--cone-zr",
+        type=float,
+        default=0.5,
+        help="Equatorial-wedge cut |z|/r for --select wind (0.5 = +-30 deg of xy).",
+    )
+    p.add_argument(
+        "--plane",
+        default="none",
+        choices=["none", "xy", "xz", "yz"],
+        help="Exact axis-aligned line-of-sight projection (integrate along the third "
+        "axis): xy=top-down, xz=along y, yz=along x. Forces no rotation.",
+    )
+    p.add_argument(
+        "--scalebar",
+        action="store_true",
+        help="Draw a map-style scale bar of ~n*r_t (fixed boxes only).",
+    )
+    p.add_argument(
+        "--spin-tfb",
+        default="",
+        help="Comma-separated t_fb times to pause and spin 360 (e.g. 0.5,1.0,1.5). "
+        "Empty keeps the single trailing spin.",
+    )
+    p.add_argument(
+        "--final-turns",
+        type=int,
+        default=1,
+        help="Full turns at the final snapshot when --spin-tfb is set.",
+    )
+    p.add_argument(
+        "--box-field",
+        default=None,
+        help="Field defining the auto box (default: --field). "
+        "E.g. density to match a density movie's framing.",
+    )
     p.add_argument("--disk-radius", type=float, default=300.0)
-    p.add_argument("--rotate", action="store_true", help="Orbit camera while time advances.")
-    p.add_argument("--flip-x", action="store_true", help="Reverse the displayed x-axis.")
+    p.add_argument(
+        "--rotate", action="store_true", help="Orbit camera while time advances."
+    )
+    p.add_argument(
+        "--flip-x", action="store_true", help="Reverse the displayed x-axis."
+    )
     p.add_argument("--total-angle", type=float, default=360.0)
-    p.add_argument("--spin-frames", type=int, default=0,
-                   help="Trailing frames orbiting the final state (0=off).")
+    p.add_argument(
+        "--spin-frames",
+        type=int,
+        default=0,
+        help="Trailing frames orbiting the final state (0=off).",
+    )
     p.add_argument("--spin-angle", type=float, default=360.0)
     p.add_argument("--start", type=int, default=0)
     p.add_argument("--end", type=int, default=151)
     p.add_argument("--step", type=int, default=1, help="Use every Nth snapshot.")
     p.add_argument("--ref-index", type=int, default=-1)
-    p.add_argument("--coords", default="CMx,CMy,CMz", help="Coordinate fields (comma-sep).")
+    p.add_argument(
+        "--coords", default="CMx,CMy,CMz", help="Coordinate fields (comma-sep)."
+    )
     p.add_argument("--res", type=int, default=224)
     p.add_argument("--resolution", type=int, default=1024)
-    p.add_argument("--workers", type=int, default=8,
-                   help="KDTree NN query threads per grid build (raise for high --res "
-                        "with few --n-jobs so one build uses all cores).")
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=8,
+        help="KDTree NN query threads per grid build (raise for high --res "
+        "with few --n-jobs so one build uses all cores).",
+    )
     p.add_argument("--cmap", default="magma")
-    p.add_argument("--vmin", type=float, default=None, help="Fixed colorbar vmin (cgs).")
-    p.add_argument("--vmax", type=float, default=None, help="Fixed colorbar vmax (cgs).")
-    p.add_argument("--norm", default="log", choices=["log", "linear", "symlog"],
-                   help="Colour norm; symlog for signed fields (e.g. bernoulli).")
-    p.add_argument("--linthresh", type=float, default=1.0, help="SymLogNorm linear threshold.")
-    p.add_argument("--m-bh", type=float, default=1e4, help="BH mass (Msun) for derived fields.")
+    p.add_argument(
+        "--vmin", type=float, default=None, help="Fixed colorbar vmin (cgs)."
+    )
+    p.add_argument(
+        "--vmax", type=float, default=None, help="Fixed colorbar vmax (cgs)."
+    )
+    p.add_argument(
+        "--norm",
+        default="log",
+        choices=["log", "linear", "symlog"],
+        help="Colour norm; symlog for signed fields (e.g. bernoulli).",
+    )
+    p.add_argument(
+        "--linthresh", type=float, default=1.0, help="SymLogNorm linear threshold."
+    )
+    p.add_argument(
+        "--m-bh", type=float, default=1e4, help="BH mass (Msun) for derived fields."
+    )
     p.add_argument("--m-star", type=float, default=0.5, help="Star mass (Msun).")
     p.add_argument("--r-star", type=float, default=0.47, help="Star radius (Rsun).")
     p.add_argument("--elevation", type=float, default=26.0)
@@ -150,23 +209,35 @@ def main(argv=None):
     p.add_argument("--out", default="evolution.mp4")
     p.add_argument("--frames-dir", default=None)
     p.add_argument("--keep-frames", action="store_true")
-    p.add_argument("--bh-frame", action="store_true",
-                   help="Transform pre-switch (star-frame) snapshots into the BH frame.")
+    p.add_argument(
+        "--bh-frame",
+        action="store_true",
+        help="Transform pre-switch (star-frame) snapshots into the BH frame.",
+    )
     p.add_argument("--beta", type=float, default=1.0)
-    p.add_argument("--switch-snap", type=int, default=21,
-                   help="First snapshot already in the BH frame (earlier ones get shifted).")
+    p.add_argument(
+        "--switch-snap",
+        type=int,
+        default=21,
+        help="First snapshot already in the BH frame (earlier ones get shifted).",
+    )
     args = p.parse_args(argv)
 
     os.environ.setdefault("MPLBACKEND", "Agg")
     os.environ.setdefault("OMP_NUM_THREADS", "1")
 
     import richio
+
     if args.bh_frame:
         # Scripts-only shim: pre-switch snapshots are returned already in the BH
         # frame.  Forked render workers inherit this monkeypatched loader.
         import tde_frame
+
         richio.load = tde_frame.make_bh_frame_loader(
-            m_bh=args.m_bh, m_star=args.m_star, r_star=args.r_star, beta=args.beta,
+            m_bh=args.m_bh,
+            m_star=args.m_star,
+            r_star=args.r_star,
+            beta=args.beta,
             switch_snap=args.switch_snap,
         )
     from richio.render import evolution_movie
@@ -191,19 +262,32 @@ def main(argv=None):
         import tde_frame
 
         selection_fn = functools.partial(
-            tde_frame.select_unbound_outflow, zr_max=args.cone_zr,
-            m_bh=args.m_bh, m_star=args.m_star, r_star=args.r_star, coords=coords,
+            tde_frame.select_unbound_outflow,
+            zr_max=args.cone_zr,
+            m_bh=args.m_bh,
+            m_star=args.m_star,
+            r_star=args.r_star,
+            coords=coords,
         )
 
     # Exact axis-aligned plane projection: override the camera to look straight
     # down the integration axis and disable all rotation (static plane map).
     azimuth, elevation, rotate, spin_frames = (
-        args.azimuth, args.elevation, args.rotate, args.spin_frames)
+        args.azimuth,
+        args.elevation,
+        args.rotate,
+        args.spin_frames,
+    )
     if args.plane != "none":
-        azimuth, elevation = {"xy": (0.0, 90.0), "xz": (0.0, 0.0), "yz": (90.0, 0.0)}[args.plane]
+        azimuth, elevation = {"xy": (0.0, 90.0), "xz": (0.0, 0.0), "yz": (90.0, 0.0)}[
+            args.plane
+        ]
         rotate, spin_frames = False, 0
-        print(f"[render_evolution] plane={args.plane} -> azimuth={azimuth}, "
-              f"elevation={elevation}, no rotation", flush=True)
+        print(
+            f"[render_evolution] plane={args.plane} -> azimuth={azimuth}, "
+            f"elevation={elevation}, no rotation",
+            flush=True,
+        )
 
     # Scale bar sized to the TDE tidal radius r_t = R*(M_BH/M*)^(1/3).
     scalebar_frac = scalebar_label = None
@@ -211,23 +295,35 @@ def main(argv=None):
         r_t = args.r_star * (args.m_bh / args.m_star) ** (1.0 / 3.0)
         if box_arg is not None:
             scalebar_frac, scalebar_label = _scalebar_for_box(box_arg, args.zoom, r_t)
-            print(f"[render_evolution] r_t = {r_t:.3f} R_sun -> scale bar "
-                  f"{scalebar_label} (frac={scalebar_frac:.3f})", flush=True)
+            print(
+                f"[render_evolution] r_t = {r_t:.3f} R_sun -> scale bar "
+                f"{scalebar_label} (frac={scalebar_frac:.3f})",
+                flush=True,
+            )
         else:
-            print(f"[render_evolution] --scalebar needs a fixed box (A/B); skipping "
-                  f"(r_t={r_t:.3f})", flush=True)
+            print(
+                f"[render_evolution] --scalebar needs a fixed box (A/B); skipping "
+                f"(r_t={r_t:.3f})",
+                flush=True,
+            )
 
     # Multi-spin: pause and spin at the given t_fb times.
     spin_at = None
     spin_tfb = [float(s) for s in args.spin_tfb.split(",") if s.strip()]
     if spin_tfb:
         spin_at = _spin_indices(snaps, spin_tfb)
-        print(f"[render_evolution] spin at t_fb {spin_tfb} -> snapshot indices {spin_at}, "
-              f"final turns={args.final_turns}", flush=True)
+        print(
+            f"[render_evolution] spin at t_fb {spin_tfb} -> snapshot indices {spin_at}, "
+            f"final turns={args.final_turns}",
+            flush=True,
+        )
 
-    print(f"[render_evolution] {len(snaps)} snapshots, mode={args.mode}, box={args.box}, "
-          f"select={args.select}, plane={args.plane}, rotate={rotate}, res={args.res}, "
-          f"n_jobs={args.n_jobs}", flush=True)
+    print(
+        f"[render_evolution] {len(snaps)} snapshots, mode={args.mode}, box={args.box}, "
+        f"select={args.select}, plane={args.plane}, rotate={rotate}, res={args.res}, "
+        f"n_jobs={args.n_jobs}",
+        flush=True,
+    )
 
     out = evolution_movie(
         snaps,

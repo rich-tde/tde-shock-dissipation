@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Scan first+last snapshots for fixed projection colour limits.
 
 For each ``(box, camera)`` and field, project the **first** and **last** snapshot
@@ -28,34 +27,31 @@ import json
 import os
 import sys
 
-import numpy as np
-
 import render_evolution  # BOX_PRESETS, find_snapshots
 import render_evolution_multi as rem  # _index_map, _field_grid, FIELD_RECIPE
 import tde_frame
-
 
 # Field order MUST match jobs/submit_v2_groups.sh / render_multi.slurm FIELDS.
 FIELDS = ["density", "dissipation", "temperature", "bernoulli"]
 
 # Named cameras (azimuth, elevation), matching the submit scripts.
 CAMERAS = {
-    "canonical": (45.0, 26.0),   # g2 default 3/4 view
-    "side":      (0.0, 15.0),    # g3 side (along y)
-    "top":       (20.0, 72.0),   # g3 top (along z)
-    "faceon":    (0.0, 90.0),    # exact xy-plane projection (look down z), no rotation
+    "canonical": (45.0, 26.0),  # g2 default 3/4 view
+    "side": (0.0, 15.0),  # g3 side (along y)
+    "top": (20.0, 72.0),  # g3 top (along z)
+    "faceon": (0.0, 90.0),  # exact xy-plane projection (look down z), no rotation
 }
 
 # Which group configs to emit paste-ready lines for: (label, box, camera).
 GROUP_CONFIGS = [
-    ("g2_A",      "A", "canonical"),
-    ("g2_B",      "B", "canonical"),
+    ("g2_A", "A", "canonical"),
+    ("g2_B", "B", "canonical"),
     ("g3_side_A", "A", "side"),
     ("g3_side_B", "B", "side"),
-    ("g3_top_A",  "A", "top"),
-    ("g3_top_B",  "B", "top"),
-    ("faceon_A",  "A", "faceon"),
-    ("faceon_B",  "B", "faceon"),
+    ("g3_top_A", "A", "top"),
+    ("g3_top_B", "B", "top"),
+    ("faceon_A", "A", "faceon"),
+    ("faceon_B", "B", "faceon"),
 ]
 
 
@@ -79,11 +75,14 @@ def _union(b1, b2, norm):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("run_dir")
     p.add_argument("--boxes", default="A,B")
-    p.add_argument("--snaps", default="21,151", help="First,last snapshot indices to union.")
+    p.add_argument(
+        "--snaps", default="21,151", help="First,last snapshot indices to union."
+    )
     p.add_argument("--cameras", default="canonical,side,top")
     p.add_argument("--coords", default="CMx,CMy,CMz")
     p.add_argument("--res", type=int, default=1024)
@@ -102,9 +101,13 @@ def main(argv=None):
     os.environ.setdefault("OMP_NUM_THREADS", "1")
 
     import richio
+
     richio.load = tde_frame.make_bh_frame_loader(
-        m_bh=args.m_bh, m_star=args.m_star, r_star=args.r_star,
-        beta=args.beta, switch_snap=args.switch_snap,
+        m_bh=args.m_bh,
+        m_star=args.m_star,
+        r_star=args.r_star,
+        beta=args.beta,
+        switch_snap=args.switch_snap,
     )
     from richio.render.yt_backend import _make_projection, to_yt
 
@@ -112,7 +115,12 @@ def main(argv=None):
     boxes = [b.strip() for b in args.boxes.split(",") if b.strip()]
     snaps = [int(s) for s in args.snaps.split(",") if s.strip()]
     cams = [c.strip() for c in args.cameras.split(",") if c.strip()]
-    derived_kw = dict(m_bh=args.m_bh, m_star=args.m_star, r_star=args.r_star, coords=coords)
+    derived_kw = {
+        "m_bh": args.m_bh,
+        "m_star": args.m_star,
+        "r_star": args.r_star,
+        "coords": coords,
+    }
 
     # per-snap[box] -> {(field, cam): (lo, hi)}
     per_snap = {}
@@ -121,27 +129,56 @@ def main(argv=None):
         for snap_i in snaps:
             paths = render_evolution.find_snapshots(args.run_dir, snap_i, snap_i)
             if not paths:
-                print(f"[scan] WARNING snap_{snap_i} not found; skipping", file=sys.stderr)
+                print(
+                    f"[scan] WARNING snap_{snap_i} not found; skipping", file=sys.stderr
+                )
                 continue
             snap = richio.load(paths[0])
-            print(f"[scan] box={box_name} snap_{snap_i}: building index "
-                  f"(res={args.res}, workers={args.workers})...", flush=True)
+            print(
+                f"[scan] box={box_name} snap_{snap_i}: building index "
+                f"(res={args.res}, workers={args.workers})...",
+                flush=True,
+            )
             i, bbox, dims, tval, tunit = rem._index_map(
-                snap, coords, args.res, box, args.workers)
+                snap, coords, args.res, box, args.workers
+            )
             for field in FIELDS:
                 rec = rem.FIELD_RECIPE[field]
-                grid = rem._field_grid(snap, i, bbox, dims, tval, tunit, coords,
-                                       field, rec["weight"], None, derived_kw, "cgs")
+                grid = rem._field_grid(
+                    snap,
+                    i,
+                    bbox,
+                    dims,
+                    tval,
+                    tunit,
+                    coords,
+                    field,
+                    rec["weight"],
+                    None,
+                    derived_kw,
+                    "cgs",
+                )
                 ds = to_yt(grid)  # build the yt dataset once; reuse across cameras
                 for cam in cams:
                     az, el = CAMERAS[cam]
                     arr, _u = _make_projection(
-                        grid, field, azimuth=az, elevation=el,
-                        rot_axis=(0.0, 0.0, 1.0), angle=0.0, zoom=args.zoom,
-                        resolution=args.resolution, weight=rec["weight"], ds=ds)
+                        grid,
+                        field,
+                        azimuth=az,
+                        elevation=el,
+                        rot_axis=(0.0, 0.0, 1.0),
+                        angle=0.0,
+                        zoom=args.zoom,
+                        resolution=args.resolution,
+                        weight=rec["weight"],
+                        ds=ds,
+                    )
                     lo, hi = _bounds_for_array(arr, rec["norm"])
                     per_snap.setdefault((box_name, snap_i), {})[(field, cam)] = (lo, hi)
-                    print(f"[scan]   {field:11s} {cam:9s} -> [{lo:.4g}, {hi:.4g}]", flush=True)
+                    print(
+                        f"[scan]   {field:11s} {cam:9s} -> [{lo:.4g}, {hi:.4g}]",
+                        flush=True,
+                    )
                     del arr
                 del ds, grid
                 gc.collect()
@@ -160,7 +197,8 @@ def main(argv=None):
                 key = (field, cam)
                 if key in b_first and key in b_last:
                     unioned[(box_name, field, cam)] = _union(
-                        b_first[key], b_last[key], norm)
+                        b_first[key], b_last[key], norm
+                    )
                 elif key in b_last:
                     unioned[(box_name, field, cam)] = b_last[key]
                 elif key in b_first:
@@ -170,8 +208,13 @@ def main(argv=None):
     print("\n" + "=" * 72)
     print("Paste-ready colour limits (field order: " + ",".join(FIELDS) + ")")
     print("=" * 72)
-    out_json = {"fields": FIELDS, "snaps": snaps, "res": args.res,
-                "resolution": args.resolution, "configs": {}}
+    out_json = {
+        "fields": FIELDS,
+        "snaps": snaps,
+        "res": args.res,
+        "resolution": args.resolution,
+        "configs": {},
+    }
     for label, box_name, cam in GROUP_CONFIGS:
         if box_name not in boxes or cam not in cams:
             continue
@@ -181,8 +224,12 @@ def main(argv=None):
             vmins.append(f"{lo:.6g}")
             vmaxs.append(f"{hi:.6g}")
         vmins_s, vmaxs_s = ",".join(vmins), ",".join(vmaxs)
-        out_json["configs"][label] = {"box": box_name, "camera": cam,
-                                      "vmins": vmins_s, "vmaxs": vmaxs_s}
+        out_json["configs"][label] = {
+            "box": box_name,
+            "camera": cam,
+            "vmins": vmins_s,
+            "vmaxs": vmaxs_s,
+        }
         print(f"\n# {label} (box {box_name}, camera {cam})")
         print(f"VMINS={vmins_s}")
         print(f"VMAXS={vmaxs_s}")

@@ -17,73 +17,70 @@ app = typer.Typer()
 def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
     if mode == 1:
         # 1e4
-        DATADIRS = (
+        data_directories = (
             "/data1/projects/pi-rossiem/TDE_data/NewSnellius/R0.47M0.5BH10000beta1S60ComptonHiRes",
         )
-        OUTPUT_FILE = (
+        output_file = (
             "/home/hey4/rich_tde/data/processed/SimpleTimeseries/Ediss-t-1e4-final.txt"
         )
-        NCADENCE = 1
-        Rstar = 0.47 * richio.units.lscale
-        Mstar = 0.5 * richio.units.mscale
-        Mbh = 1e4 * richio.units.mscale
+        cadence = 1
+        stellar_radius = 0.47 * richio.units.lscale
+        stellar_mass = 0.5 * richio.units.mscale
+        black_hole_mass = 1e4 * richio.units.mscale
     elif mode == 2:
         # 1e5
-        DATADIRS = (
+        data_directories = (
             "/data1/projects/pi-rossiem/TDE_data/YujieSnellius/R0.47M0.5BH100000beta1S60n1.5ComptonHiResNewAMR",
         )
-        OUTPUT_FILE = (
+        output_file = (
             "/home/hey4/rich_tde/data/processed/SimpleTimeseries/Ediss-t-1e5-final.txt"
         )
-        NCADENCE = 1
-        Rstar = 0.47 * richio.units.lscale
-        Mstar = 0.5 * richio.units.mscale
-        Mbh = 1e5 * richio.units.mscale
+        cadence = 1
+        stellar_radius = 0.47 * richio.units.lscale
+        stellar_mass = 0.5 * richio.units.mscale
+        black_hole_mass = 1e5 * richio.units.mscale
     elif mode == 3:
         # 1e6
-        DATADIRS = (
+        data_directories = (
             "/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE",
             "/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE4",
             "/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE4_new",
         )
-        OUTPUT_FILE = (
+        output_file = (
             "/home/hey4/rich_tde/data/processed/SimpleTimeseries/Ediss-t-1e6-final.txt"
         )
-        NCADENCE = 1
-        Rstar = 1 * richio.units.lscale
-        Mstar = 1 * richio.units.mscale
-        Mbh = 1e6 * richio.units.mscale
+        cadence = 1
+        stellar_radius = 1 * richio.units.lscale
+        stellar_mass = 1 * richio.units.mscale
+        black_hole_mass = 1e6 * richio.units.mscale
     else:
         raise ValueError("Invalid mode. Please choose 1, 2, or 3.")
 
-    r_amin = Rstar * (Mbh / Mstar) ** (2 / 3)
-    r_p = Rstar * (Mbh / Mstar) ** (1 / 3)
-    tmin = (
+    most_bound_apocenter = stellar_radius * (black_hole_mass / stellar_mass) ** (2 / 3)
+    pericenter_radius = stellar_radius * (black_hole_mass / stellar_mass) ** (1 / 3)
+    fallback_time = (
         np.pi
         / np.sqrt(2)
-        * (Rstar**3 / u.G / Mstar) ** (1 / 2)
-        * (Mbh / Mstar) ** (1 / 2)
+        * (stellar_radius**3 / u.G / stellar_mass) ** (1 / 2)
+        * (black_hole_mass / stellar_mass) ** (1 / 2)
     )
-    # r_p = Rstar * (Mbh / Mstar) ** (1 / 3) * 1
-    # Delta = u.G * Mbh / (4 * r_p) * Mstar / 2
-
     snapnums = []
-    ts = []
-    tfbs = []
-    Ediss1s = []
-    Ediss2s = []
-    Ediss3s = []
-    Ediss4s = []
+    times = []
+    fallback_times = []
+    pericenter_powers = []
+    outgoing_powers = []
+    incoming_powers = []
+    outer_powers = []
 
-    for dir in DATADIRS:
-        logger.info(f"Processing directory: {dir}")
+    for data_directory in data_directories:
+        logger.info(f"Processing directory: {data_directory}")
         snap_files = sorted(
-            glob.glob(os.path.join(dir, "snap_full_*.h5")),
+            glob.glob(os.path.join(data_directory, "snap_full_*.h5")),
             key=lambda f: int(re.search(r"snap_full_(\d+)\.h5", f).group(1)),
         )
         plain_snap_files = [
             f
-            for f in glob.glob(os.path.join(dir, "snap_*.h5"))
+            for f in glob.glob(os.path.join(data_directory, "snap_*.h5"))
             if re.fullmatch(r"snap_\d+\.h5", os.path.basename(f))
         ]
         snap_files += sorted(
@@ -91,14 +88,14 @@ def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
             key=lambda f: int(re.search(r"snap_(\d+)\.h5", f).group(1)),
         )
 
-        for snap_file in snap_files[::NCADENCE]:
+        for snap_file in snap_files[::cadence]:
             try:
                 snapnum = int(re.search(r"snap_full_(\d+)\.h5", snap_file).group(1))
             except AttributeError:
                 snapnum = int(re.search(r"snap_(\d+)\.h5", snap_file).group(1))
 
             if (
-                os.path.basename(dir) == "TEMPTDE4" and snapnum >= 826
+                os.path.basename(data_directory) == "TEMPTDE4" and snapnum >= 826
             ):  # use hi-res restart of TEMPTDE4_new
                 continue
 
@@ -107,59 +104,72 @@ def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
                 t = snap.t[0]
             except IndexError:
                 t = snap.t
-            tfb = t / tmin
+            tfb = t / fallback_time
             if t < 0:
-                r_a = r_p
+                apocenter_radius = pericenter_radius
             else:
-                r_a = r_amin * (tfb) ** (2 / 3)
+                apocenter_radius = most_bound_apocenter * tfb ** (2 / 3)
 
             if mode == 3:
-                needs_switch = os.path.basename(dir) == "TEMPTDE"
+                needs_switch = os.path.basename(data_directory) == "TEMPTDE"
             else:
                 needs_switch = bool(
                     re.fullmatch(r"snap_\d+\.h5", os.path.basename(snap_file))
                 )
 
             if needs_switch:
-                x0 = dev.reference_frame_offset(
-                    t=t, Mbh=Mbh, Mstar=Mstar, Rstar=Rstar, beta=1
+                frame_offset = dev.reference_frame_offset(
+                    t=t,
+                    Mbh=black_hole_mass,
+                    Mstar=stellar_mass,
+                    Rstar=stellar_radius,
+                    beta=1,
                 )
-                X = snap.X + x0[0]
-                Y = snap.Y + x0[1]
+                x = snap.X + frame_offset[0]
+                y = snap.Y + frame_offset[1]
             else:
-                X, Y = snap.X, snap.Y
+                x, y = snap.X, snap.Y
 
-            shock1_cut = X > 0
-            shock2_cut = (X > -r_a) & (X < 0) & (Y < 0)
-            shock3_cut = (X > -r_a) & (X < 0) & (Y > 0)
-            shock4_cut = X < -r_a
+            pericenter_region = x > 0
+            outgoing_region = (x > -apocenter_radius) & (x < 0) & (y < 0)
+            incoming_region = (x > -apocenter_radius) & (x < 0) & (y > 0)
+            outer_region = x < -apocenter_radius
 
-            Ediss = snap.dissipation * snap.volume
-            Ediss1 = np.sum(Ediss[shock1_cut])
-            Ediss2 = np.sum(Ediss[shock2_cut])
-            Ediss3 = np.sum(Ediss[shock3_cut])
-            Ediss4 = np.sum(Ediss[shock4_cut])
+            cell_dissipation_power = snap.dissipation * snap.volume
+            pericenter_power = np.sum(cell_dissipation_power[pericenter_region])
+            outgoing_power = np.sum(cell_dissipation_power[outgoing_region])
+            incoming_power = np.sum(cell_dissipation_power[incoming_region])
+            outer_power = np.sum(cell_dissipation_power[outer_region])
 
             snapnums.append(snapnum)
-            ts.append(t)
-            tfbs.append(tfb)
-            Ediss1s.append(Ediss1)
-            Ediss2s.append(Ediss2)
-            Ediss3s.append(Ediss3)
-            Ediss4s.append(Ediss4)
+            times.append(t)
+            fallback_times.append(tfb)
+            pericenter_powers.append(pericenter_power)
+            outgoing_powers.append(outgoing_power)
+            incoming_powers.append(incoming_power)
+            outer_powers.append(outer_power)
 
-            logger.info(f"{snapnum} {t} {tfb} {Ediss1} {Ediss2} {Ediss3} {Ediss4}")
+            logger.info(
+                "{} {} {} {} {} {} {}",
+                snapnum,
+                t,
+                tfb,
+                pericenter_power,
+                outgoing_power,
+                incoming_power,
+                outer_power,
+            )
 
             u.savetxt(
-                OUTPUT_FILE,
+                output_file,
                 arrays=[
                     u.unyt_array(snapnums),
-                    u.unyt_array(ts),
-                    u.unyt_array(tfbs),
-                    u.unyt_array(Ediss1s),
-                    u.unyt_array(Ediss2s),
-                    u.unyt_array(Ediss3s),
-                    u.unyt_array(Ediss4s),
+                    u.unyt_array(times),
+                    u.unyt_array(fallback_times),
+                    u.unyt_array(pericenter_powers),
+                    u.unyt_array(outgoing_powers),
+                    u.unyt_array(incoming_powers),
+                    u.unyt_array(outer_powers),
                 ],
                 header="SNAPNUM\tTIME\tTFALLBACK\tEDISS1\tEDISS2\tEDISS3\tEDISS4",
                 footer="shock1_cut = X > 0\nshock2_cut = (X > -r_a) & (X < 0) & (Y < 0)\nshock3_cut = (X > -r_a) & (X < 0) & (Y > 0)\nshock4_cut = X < -r_a",

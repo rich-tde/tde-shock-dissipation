@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Render a rotating-camera volume movie of a RICH snapshot.
 
 Depth-cued 3-D volume rendering via :mod:`richio.render` (yt backend). Frames
@@ -25,11 +24,13 @@ import argparse
 import os
 import sys
 import time
+from pathlib import Path
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("snapshot", help="Path to a RICH snapshot (.h5 or NPY dir).")
     p.add_argument("--field", default="density")
     p.add_argument("--res", type=int, default=256, help="Resampling grid resolution.")
@@ -40,18 +41,43 @@ def main(argv=None):
     p.add_argument("--azimuth", type=float, default=0.0)
     p.add_argument("--zoom", type=float, default=1.4)
     p.add_argument("--rot-axis", default="z", choices=["x", "y", "z"])
-    p.add_argument("--box", default="auto", choices=["auto", "full"],
-                   help="'auto' fits a tight box around the dense region.")
-    p.add_argument("--mode", default="volume", choices=["volume", "projection"],
-                   help="'volume' (transfer function) or 'projection' (line integral, no occlusion).")
-    p.add_argument("--weight", default=None, help="Projection weight field (default: column density).")
-    p.add_argument("--tf-mode", default="map", choices=["map", "layers"],
-                   help="'map' continuous colormap (shows core); 'layers' shells.")
-    p.add_argument("--alpha", type=float, default=20.0, help="Opacity scale (map mode).")
-    p.add_argument("--gamma", type=float, default=2.5, help="Opacity ramp exponent; lower=more haze.")
+    p.add_argument(
+        "--box",
+        default="auto",
+        choices=["auto", "full"],
+        help="'auto' fits a tight box around the dense region.",
+    )
+    p.add_argument(
+        "--mode",
+        default="volume",
+        choices=["volume", "projection"],
+        help="'volume' (transfer function) or 'projection' (line integral, no occlusion).",
+    )
+    p.add_argument(
+        "--weight",
+        default=None,
+        help="Projection weight field (default: column density).",
+    )
+    p.add_argument(
+        "--tf-mode",
+        default="map",
+        choices=["map", "layers"],
+        help="'map' continuous colormap (shows core); 'layers' shells.",
+    )
+    p.add_argument(
+        "--alpha", type=float, default=20.0, help="Opacity scale (map mode)."
+    )
+    p.add_argument(
+        "--gamma",
+        type=float,
+        default=2.5,
+        help="Opacity ramp exponent; lower=more haze.",
+    )
     p.add_argument("--n-layers", type=int, default=6)
     p.add_argument("--cmap", default="magma")
-    p.add_argument("--colorbar", action="store_true", help="Annotate frames with a colorbar.")
+    p.add_argument(
+        "--colorbar", action="store_true", help="Annotate frames with a colorbar."
+    )
     p.add_argument("--sigma-clip", type=float, default=4.0)
     p.add_argument("--vmin", type=float, default=None)
     p.add_argument("--vmax", type=float, default=None)
@@ -65,27 +91,32 @@ def main(argv=None):
 
     os.environ.setdefault("MPLBACKEND", "Agg")
 
-    import richio
     from richio.render import to_uniform_grid, volume_movie
 
-    axis = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}[args.rot_axis]
+    import richio
 
-    outdir = os.path.dirname(os.path.abspath(args.out))
-    if outdir:
-        os.makedirs(outdir, exist_ok=True)
+    axis = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}[
+        args.rot_axis
+    ]
+
+    output_path = Path(args.out).resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"[render_volume_movie] loading {args.snapshot}", flush=True)
     snap = richio.load(args.snapshot)
 
     box_size = "auto" if args.box == "auto" else None
 
-    t0 = time.time()
+    grid_started = time.time()
     grid = to_uniform_grid(snap, args.field, res=args.res, box_size=box_size)
-    print(f"[render_volume_movie] grid {grid.dims} built in {time.time() - t0:.1f}s",
-          flush=True)
+    print(
+        f"[render_volume_movie] grid {grid.dims} built in "
+        f"{time.time() - grid_started:.1f}s",
+        flush=True,
+    )
 
-    t1 = time.time()
-    out = volume_movie(
+    render_started = time.time()
+    result = volume_movie(
         snap,
         field=args.field,
         grid=grid,
@@ -110,13 +141,16 @@ def main(argv=None):
         resolution=args.resolution,
         fps=args.fps,
         n_jobs=args.n_jobs,
-        filename=args.out,
+        filename=str(output_path),
         frames_dir=args.frames_dir,
         keep_frames=args.keep_frames,
     )
-    dt = time.time() - t1
-    print(f"[render_volume_movie] {args.nframes} frames in {dt:.1f}s "
-          f"({dt / max(args.nframes, 1):.2f}s/frame) -> {out['filename']}", flush=True)
+    elapsed = time.time() - render_started
+    print(
+        f"[render_volume_movie] {args.nframes} frames in {elapsed:.1f}s "
+        f"({elapsed / max(args.nframes, 1):.2f}s/frame) -> {result['filename']}",
+        flush=True,
+    )
     return 0
 
 

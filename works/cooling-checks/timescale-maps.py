@@ -11,15 +11,14 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import dev  # noqa: F401  # isort: skip  # Configure style before pyplot.
 import matplotlib.pyplot as plt
 import numpy as np
 import typer
 import unyt as u
 from loguru import logger
 
-import dev  # noqa: F401  # Configure the local RICH/richio imports.
 import richio
-
 
 app = typer.Typer()
 A_RAD = 4 * u.stefan_boltzmann_constant / u.c
@@ -33,8 +32,10 @@ def mode_settings(mode: int):
             "label": "1e4",
             "runs": (
                 (
-                    "/data1/projects/pi-rossiem/TDE_data/NewSnellius/"
-                    "R0.47M0.5BH10000beta1S60ComptonHiRes",
+                    (
+                        "/data1/projects/pi-rossiem/TDE_data/NewSnellius/"
+                        "R0.47M0.5BH10000beta1S60ComptonHiRes"
+                    ),
                     range(21, 151, 10),
                 ),
             ),
@@ -48,8 +49,10 @@ def mode_settings(mode: int):
             "label": "1e5",
             "runs": (
                 (
-                    "/data1/projects/pi-rossiem/TDE_data/YujieSnellius/"
-                    "R0.47M0.5BH100000beta1S60n1.5ComptonHiResNewAMR",
+                    (
+                        "/data1/projects/pi-rossiem/TDE_data/YujieSnellius/"
+                        "R0.47M0.5BH100000beta1S60n1.5ComptonHiResNewAMR"
+                    ),
                     range(70, 150, 10),
                 ),
             ),
@@ -147,7 +150,7 @@ def make_figure(snap_path: Path, snapnum: int, settings, output_dir: Path):
         t_vertical = scale_height / vz_scale_height
         escape_vertical_ratio = t_escape / t_vertical
 
-    fig, axes = plt.subplots(2, 3, figsize=(19, 11), constrained_layout=True)
+    fig, axes = plt.subplots(2, 3, figsize=(13, 7.5), constrained_layout=True)
     time_panels = (
         (axes[0, 0], t_cool / t_dyn, r"$\log_{10}(t_c/t_\mathrm{dyn,*})$"),
         (axes[0, 1], t_vertical / t_dyn, r"$\log_{10}(t_v/t_\mathrm{dyn,*})$"),
@@ -176,11 +179,6 @@ def make_figure(snap_path: Path, snapnum: int, settings, output_dir: Path):
         r"$\log_{10}(H/R_*)$",
     )
 
-    time_days = float(snap.time.in_units("day"))
-    fig.suptitle(
-        rf"$M_\mathrm{{BH}}={settings['label']}\,M_\odot$, "
-        rf"snapshot {snapnum}, $t={time_days:.2f}$ day"
-    )
     output_file = output_dir / f"timescales-{settings['label']}-snap-{snapnum:04d}.png"
     fig.savefig(output_file, dpi=200)
     plt.close(fig)

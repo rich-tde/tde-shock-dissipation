@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #SBATCH --partition=gpu_strw
 #SBATCH --account=gpu_strw
 #SBATCH --job-name=plot-regional-circularization-t
@@ -9,6 +9,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=4G
+
+set -euo pipefail
 
 /home/hey4/.conda/envs/richanalysis/bin/jupyter nbconvert \
     --to notebook \

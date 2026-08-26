@@ -41,32 +41,40 @@ def _nice_decade(x, direction):
     if x <= 0:
         return x
     k = np.floor(np.log10(x))
-    mant = x / 10.0 ** k
+    mant = x / 10.0**k
     steps = [1.0, 2.0, 5.0, 10.0]
     if direction == "up":
         for m in steps:
             if m >= mant - 1e-9:
-                return float(m * 10.0 ** k)
+                return float(m * 10.0**k)
         return float(10.0 ** (k + 1))
     else:  # down
         for m in reversed(steps):
             if m <= mant + 1e-9:
-                return float(m * 10.0 ** k)
-        return float(10.0 ** k)
+                return float(m * 10.0**k)
+        return float(10.0**k)
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("run_dir")
     p.add_argument("--boxes", default="A,B")
     p.add_argument("--cameras", default="faceon,side")
-    p.add_argument("--snaps", default="21,40,60,80,100,120,140,151",
-                   help="Snapshot indices to pool (span the run).")
+    p.add_argument(
+        "--snaps",
+        default="21,40,60,80,100,120,140,151",
+        help="Snapshot indices to pool (span the run).",
+    )
     p.add_argument("--coords", default="CMx,CMy,CMz")
-    p.add_argument("--res", type=int, default=512,
-                   help="Interpolation grid res for the study (production is 1024; "
-                        "percentile bounds are robust to this).")
+    p.add_argument(
+        "--res",
+        type=int,
+        default=512,
+        help="Interpolation grid res for the study (production is 1024; "
+        "percentile bounds are robust to this).",
+    )
     p.add_argument("--resolution", type=int, default=512, help="Projection image px.")
     p.add_argument("--zoom", type=float, default=1.1)
     p.add_argument("--workers", type=int, default=24)
@@ -87,9 +95,13 @@ def main(argv=None):
     os.environ.setdefault("OMP_NUM_THREADS", "1")
 
     import richio
+
     richio.load = tde_frame.make_bh_frame_loader(
-        m_bh=args.m_bh, m_star=args.m_star, r_star=args.r_star,
-        beta=args.beta, switch_snap=args.switch_snap,
+        m_bh=args.m_bh,
+        m_star=args.m_star,
+        r_star=args.r_star,
+        beta=args.beta,
+        switch_snap=args.switch_snap,
     )
     from richio.render.yt_backend import _make_projection, to_yt
 
@@ -107,39 +119,64 @@ def main(argv=None):
         for snap_i in snaps:
             paths = render_evolution.find_snapshots(args.run_dir, snap_i, snap_i)
             if not paths:
-                print(f"[scan] WARNING snap_{snap_i} not found; skipping", file=sys.stderr)
+                print(
+                    f"[scan] WARNING snap_{snap_i} not found; skipping", file=sys.stderr
+                )
                 continue
             snap = richio.load(paths[0])
-            print(f"[scan] box={box_name} snap_{snap_i}: index+opacity grid "
-                  f"(res={args.res}, workers={args.workers})...", flush=True)
+            print(
+                f"[scan] box={box_name} snap_{snap_i}: index+opacity grid "
+                f"(res={args.res}, workers={args.workers})...",
+                flush=True,
+            )
             i, bbox, dims, tval, tunit = rem._index_map(
-                snap, coords, args.res, box, args.workers)
+                snap, coords, args.res, box, args.workers
+            )
             grid = rrm._opacity_grid(snap, i, bbox, dims, tval, tunit, coords)
             ds = to_yt(grid)  # build once, reuse across cameras
             for cam in cams:
                 az, el = rrm.CAMERAS[cam]
                 arr, _u = _make_projection(
-                    grid, "rosseland_alpha", azimuth=az, elevation=el,
-                    rot_axis=(0.0, 0.0, 1.0), angle=0.0, zoom=args.zoom,
-                    resolution=args.resolution, weight=None, ds=ds)
+                    grid,
+                    "rosseland_alpha",
+                    azimuth=az,
+                    elevation=el,
+                    rot_axis=(0.0, 0.0, 1.0),
+                    angle=0.0,
+                    zoom=args.zoom,
+                    resolution=args.resolution,
+                    weight=None,
+                    ds=ds,
+                )
                 v = np.asarray(arr).ravel()
                 v = v[np.isfinite(v) & (v > 0)]
                 pooled[(box_name, cam)].append(v)
                 q = np.percentile(v, pcts)
-                print(f"[scan]   {cam:7s} tau: "
-                      + " ".join(f"p{p}={qq:.3g}" for p, qq in zip(pcts, q)),
-                      flush=True)
+                print(
+                    f"[scan]   {cam:7s} tau: "
+                    + " ".join(f"p{p}={qq:.3g}" for p, qq in zip(pcts, q)),
+                    flush=True,
+                )
                 del arr, v
             del ds, grid, i
             gc.collect()
 
     # Aggregate pooled distribution and recommend fixed bounds per (box, cam).
     print("\n" + "=" * 78)
-    print(f"Pooled tau distribution and recommended fixed log range "
-          f"(vmin=p{args.pmin}, vmax=p{args.pmax}, rounded to decades)")
+    print(
+        f"Pooled tau distribution and recommended fixed log range "
+        f"(vmin=p{args.pmin}, vmax=p{args.pmax}, rounded to decades)"
+    )
     print("=" * 78)
-    out = {"snaps": snaps, "res": args.res, "resolution": args.resolution,
-           "pmin": args.pmin, "pmax": args.pmax, "percentiles": pcts, "configs": {}}
+    out = {
+        "snaps": snaps,
+        "res": args.res,
+        "resolution": args.resolution,
+        "pmin": args.pmin,
+        "pmax": args.pmax,
+        "percentiles": pcts,
+        "configs": {},
+    }
     for box_name in boxes:
         for cam in cams:
             chunks = pooled[(box_name, cam)]
@@ -153,16 +190,22 @@ def main(argv=None):
             vmax = _nice_decade(hi_raw, "up")
             label = f"{box_name}_{cam}"
             out["configs"][label] = {
-                "box": box_name, "camera": cam,
+                "box": box_name,
+                "camera": cam,
                 "az_el": list(rrm.CAMERAS[cam]),
-                "tau_min": float(allv.min()), "tau_max": float(allv.max()),
+                "tau_min": float(allv.min()),
+                "tau_max": float(allv.max()),
                 "pctl": {str(pp): float(qq) for pp, qq in zip(pcts, q)},
-                "vmin_raw": lo_raw, "vmax_raw": hi_raw,
-                "vmin": vmin, "vmax": vmax,
+                "vmin_raw": lo_raw,
+                "vmax_raw": hi_raw,
+                "vmin": vmin,
+                "vmax": vmax,
             }
             print(f"\n# box {box_name}, camera {cam} (az,el={rrm.CAMERAS[cam]})")
             print("  " + " ".join(f"p{pp}={qq:.3g}" for pp, qq in zip(pcts, q)))
-            print(f"  raw  vmin(p{args.pmin})={lo_raw:.4g}  vmax(p{args.pmax})={hi_raw:.4g}")
+            print(
+                f"  raw  vmin(p{args.pmin})={lo_raw:.4g}  vmax(p{args.pmax})={hi_raw:.4g}"
+            )
             print(f"  -->  VMIN={vmin:.4g}  VMAX={vmax:.4g}")
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)

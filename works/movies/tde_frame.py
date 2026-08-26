@@ -47,8 +47,14 @@ def _paczynski_x0(t, m_bh, rp, rg):
         f = m_bh / (r * (r - rg) ** 2)
         return [x[2], x[3], -x[0] * f, -x[1] * f]
 
-    sol = solve_ivp(rhs, [0.0, t], [rp, 0.0, 0.0, -vp],
-                    rtol=1e-9, atol=1e-7, max_step=abs(t) / 200 + 1e-6)
+    sol = solve_ivp(
+        rhs,
+        [0.0, t],
+        [rp, 0.0, 0.0, -vp],
+        rtol=1e-9,
+        atol=1e-7,
+        max_step=abs(t) / 200 + 1e-6,
+    )
     return sol.y[:, -1]
 
 
@@ -99,8 +105,16 @@ class _BHFrameSnapshot:
         return arr
 
 
-def select_unbound_outflow(snap, *, zr_max=None, x_sign=0, m_bh=1e4, m_star=0.5,
-                           r_star=0.47, coords=("CMx", "CMy", "CMz")):
+def select_unbound_outflow(
+    snap,
+    *,
+    zr_max=None,
+    x_sign=0,
+    m_bh=1e4,
+    m_star=0.5,
+    r_star=0.47,
+    coords=("CMx", "CMy", "CMz"),
+):
     """Boolean cell mask: **unbound** (``B > 0``) and **radially outflowing** (``v_r > 0``).
 
     ``zr_max`` adds an **equatorial-wedge** cut ``|z|/r <= zr_max`` — e.g.
@@ -118,8 +132,10 @@ def select_unbound_outflow(snap, *, zr_max=None, x_sign=0, m_bh=1e4, m_star=0.5,
     def cu(name):
         return np.asarray(snap._get_data(name).in_base("rich"), dtype="float64")
 
-    b = np.asarray(bernoulli(snap, m_bh=m_bh, m_star=m_star, r_star=r_star,
-                             coords=coords), dtype="float64")
+    b = np.asarray(
+        bernoulli(snap, m_bh=m_bh, m_star=m_star, r_star=r_star, coords=coords),
+        dtype="float64",
+    )
     x, y, z = cu(coords[0]), cu(coords[1]), cu(coords[2])
     vx, vy, vz = cu("Vx"), cu("Vy"), cu("Vz")
     r = np.sqrt(x * x + y * y + z * z)
@@ -136,8 +152,9 @@ def select_unbound_outflow(snap, *, zr_max=None, x_sign=0, m_bh=1e4, m_star=0.5,
     return mask
 
 
-def make_bh_frame_loader(m_bh=1e4, m_star=0.5, r_star=0.47, beta=1.0,
-                         switch_snap=21, orig_load=None):
+def make_bh_frame_loader(
+    m_bh=1e4, m_star=0.5, r_star=0.47, beta=1.0, switch_snap=21, orig_load=None
+):
     """Return a ``load(path)`` that puts pre-switch snapshots in the BH frame.
 
     Snapshots with ``snapnum < switch_snap`` are shifted by the star's orbital

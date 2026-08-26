@@ -65,9 +65,7 @@ def mode_settings(mode):
         * (cfg["Rstar"] ** 3 / u.G / cfg["Mstar"]) ** 0.5
         * (cfg["Mbh"] / cfg["Mstar"]) ** 0.5
     )
-    cfg["delta_tidal"] = (
-        u.G * cfg["Mbh"] * cfg["Rstar"] / cfg["rp"] ** 2
-    )
+    cfg["delta_tidal"] = u.G * cfg["Mbh"] * cfg["Rstar"] / cfg["rp"] ** 2
     cfg["delta_circ"] = u.G * cfg["Mbh"] / (4 * cfg["rp"])
     return cfg
 
@@ -76,7 +74,9 @@ def snapshot_path(run, snapnum):
     snapnums, paths = DATAPATHS(run)
     matches = [path for number, path in zip(snapnums, paths) if number == snapnum]
     if len(matches) != 1:
-        raise ValueError(f"Expected one {run} path for snapshot {snapnum}; got {matches}")
+        raise ValueError(
+            f"Expected one {run} path for snapshot {snapnum}; got {matches}"
+        )
     return matches[0]
 
 
@@ -135,13 +135,13 @@ def orbital_specific_energy(snapshot, path, time, cfg):
             phi_h + 0.5 * omega_squared * (radius[inner] ** 2 - h**2)
         ).to(potential.units)
 
-    return (0.5 * speed_squared + potential).to(
-        "code_length**2/code_time**2"
-    )
+    return (0.5 * speed_squared + potential).to("code_length**2/code_time**2")
 
 
 def save_fallback_profile(path, snapnum, time, specific_energy, cell_mass, cfg):
-    bound = np.isfinite(specific_energy) & np.isfinite(cell_mass) & (specific_energy < 0)
+    bound = (
+        np.isfinite(specific_energy) & np.isfinite(cell_mass) & (specific_energy < 0)
+    )
     energy = specific_energy[bound].to_value("erg/g")
     mass = cell_mass[bound].to_value("g")
     if energy.size == 0 or not np.isfinite(mass).all() or np.sum(mass) <= 0:
@@ -177,9 +177,7 @@ def save_fallback_profile(path, snapnum, time, specific_energy, cell_mass, cfg):
     ).to("erg/g/s")
     dmdenergy_unit = "g/(erg/g)"
     mdot_raw = (u.unyt_array(dmdenergy_raw, dmdenergy_unit) * dedt).to("Msun/yr")
-    mdot_smooth = (
-        u.unyt_array(dmdenergy_smooth, dmdenergy_unit) * dedt
-    ).to("Msun/yr")
+    mdot_smooth = (u.unyt_array(dmdenergy_smooth, dmdenergy_unit) * dedt).to("Msun/yr")
 
     order = np.argsort(return_time)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -253,9 +251,7 @@ def build_fallback_profiles(cfg, overwrite):
         time = snapshot_time(snapshot)
         specific_energy = orbital_specific_energy(snapshot, path, time, cfg)
         cell_mass = snapshot.density * snapshot.volume
-        save_fallback_profile(
-            output, snapnum, time, specific_energy, cell_mass, cfg
-        )
+        save_fallback_profile(output, snapnum, time, specific_energy, cell_mass, cfg)
     return paths
 
 
@@ -277,7 +273,9 @@ def load_ediss(cfg):
     raw = raw[list(last_index.values())]
     raw = raw[np.argsort(raw[:, 1], kind="stable")]
     if np.any(np.diff(raw[:, 1]) <= 0):
-        raise ValueError(f"{path} is not strictly increasing after restart de-duplication")
+        raise ValueError(
+            f"{path} is not strictly increasing after restart de-duplication"
+        )
     return path, raw
 
 

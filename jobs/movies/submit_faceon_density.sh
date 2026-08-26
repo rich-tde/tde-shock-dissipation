@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 cd /home/hey4/rich_tde
 
@@ -22,7 +22,7 @@ case "${1:-}" in
 esac
 
 FIELD="${2:-${FIELD:-density}}"
-if [[ "$FIELD" != density && "$FIELD" != dissipation ]]; then
+if [[ "${FIELD}" != density && "${FIELD}" != dissipation ]]; then
   echo "field must be density or dissipation" >&2
   exit 2
 fi
@@ -31,5 +31,5 @@ fi
 # only after the preview contact sheets and movies have been approved.
 sbatch --parsable \
   "${SCHEDULER[@]}" \
-  --export=ALL,QUALITY="$QUALITY",FIELD="$FIELD",NJOBS="${NJOBS:-$DEFAULT_NJOBS}",WORKERS="${WORKERS:-$DEFAULT_WORKERS}" \
+  --export=ALL,QUALITY="${QUALITY}",FIELD="${FIELD}",NJOBS="${NJOBS:-${DEFAULT_NJOBS}}",WORKERS="${WORKERS:-${DEFAULT_WORKERS}}" \
   jobs/movies/render_faceon_density.slurm

@@ -19,7 +19,9 @@ FOOTER = (
 def main():
     paths = [OUTPUT_FILE] + sorted(glob.glob(os.path.join(OUTPUT_DIR, "shard-*.txt")))
     if len(paths) != 5:
-        raise ValueError(f"Expected the main checkpoint plus four shards; found {paths}")
+        raise ValueError(
+            f"Expected the main checkpoint plus four shards; found {paths}"
+        )
     raw = np.vstack([np.atleast_2d(np.loadtxt(path)) for path in paths])
     if raw.shape[1] != 7 or not np.isfinite(raw).all():
         raise ValueError("A shard has the wrong schema or contains NaN/infinity")

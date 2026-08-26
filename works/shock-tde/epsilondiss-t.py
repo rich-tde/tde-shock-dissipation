@@ -15,8 +15,7 @@ app = typer.Typer()
 
 EPSILONDISS_UNIT = "code_length**2/code_time**3"
 OUTPUT_HEADER = (
-    "SNAPNUM\tTIME\tTFALLBACK\tEPSILONDISS1\tEPSILONDISS2\t"
-    "EPSILONDISS3\tEPSILONDISS4"
+    "SNAPNUM\tTIME\tTFALLBACK\tEPSILONDISS1\tEPSILONDISS2\tEPSILONDISS3\tEPSILONDISS4"
 )
 OUTPUT_FOOTER = (
     "EPSILONDISS = sum(dissipation * volume) / "
@@ -210,9 +209,7 @@ def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
 
             dissipation_power = snap.dissipation * snap.volume
             cell_mass = snap.density * snap.volume
-            specific_dissipation_unit = (
-                dissipation_power.units / cell_mass.units
-            )
+            specific_dissipation_unit = dissipation_power.units / cell_mass.units
             epsilondiss = []
             for region, shock_cut in enumerate(shock_cuts, start=1):
                 region_mass = np.sum(cell_mass[shock_cut])
@@ -235,8 +232,7 @@ def main(mode: int = typer.Option(..., help="Run 1e4, 1e5, or 1e6")):
             epsilondiss4s.append(epsilondiss[3])
 
             logger.info(
-                f"{snapnum} {t} {tfb} "
-                + " ".join(str(value) for value in epsilondiss)
+                f"{snapnum} {t} {tfb} " + " ".join(str(value) for value in epsilondiss)
             )
 
             save_output_atomic(

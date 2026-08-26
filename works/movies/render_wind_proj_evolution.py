@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Time-evolution movie of the unbound-wind density & dissipation projections.
 
 Reproduces the 3-plane column projections from
@@ -34,7 +33,6 @@ import sys
 
 import numpy as np
 
-
 # scripts/ is on sys.path[0] when run as ``python scripts/...``; these are the
 # sibling helper modules we reuse rather than re-implement.
 import render_evolution  # find_snapshots
@@ -62,7 +60,7 @@ def _read_tfb(path):
         n = int(os.path.basename(d).split("_")[1])
         with open(os.path.join(d, f"tfb_{n}.txt")) as fh:
             return float(fh.read().strip())
-    except Exception:
+    except (OSError, TypeError, ValueError):
         return None
 
 
@@ -160,8 +158,9 @@ def render_frame(args):
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import richio
     from richio.plots import scalar_map
+
+    import richio
 
     cfg = _CFG
     coords = cfg["coords"]
@@ -200,12 +199,12 @@ def render_frame(args):
             if row == 0:
                 ax.set_title(f"{field}  [{plane}]")
 
-    tfb = _read_tfb(path)
-    title = os.path.basename(path if os.path.isdir(path) else os.path.dirname(path))
-    if tfb is not None:
-        title += rf"   $t/t_{{fb}} = {tfb:.2f}$"
-    fig.suptitle(title, fontsize=14)
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.tight_layout()
+
+    fallback_time = _read_tfb(path)
+    run_label = os.path.basename(path if os.path.isdir(path) else os.path.dirname(path))
+    time_label = f", t/t_fb={fallback_time:.2f}" if fallback_time is not None else ""
+    print(f"[frame {idx:05d}] {run_label}{time_label}", flush=True)
 
     out_png = os.path.join(cfg["frames_dir"], f"frame_{idx:05d}.png")
     fig.savefig(out_png, dpi=cfg["dpi"])
@@ -346,17 +345,17 @@ def main(argv=None):
         print(f"[wind_proj]   {f}: log10 vmin/vmax = {scales[f]}", flush=True)
 
     _CFG.update(
-        dict(
-            coords=coords,
-            box=box,
-            res=args.res,
-            fields=fields,
-            cmaps=cmaps,
-            scales=scales,
-            frames_dir=frames_dir,
-            dpi=args.dpi,
-            tree_workers=args.tree_workers,
-        )
+        {
+            "coords": coords,
+            "box": box,
+            "res": args.res,
+            "fields": fields,
+            "cmaps": cmaps,
+            "scales": scales,
+            "frames_dir": frames_dir,
+            "dpi": args.dpi,
+            "tree_workers": args.tree_workers,
+        }
     )
 
     work = list(enumerate(snaps))

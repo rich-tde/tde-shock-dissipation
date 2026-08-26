@@ -129,10 +129,10 @@ class GriddingTests(unittest.TestCase):
                         if source_indices is not None
                         else local_indices
                     )
-                    streamed_indices[start : start + len(local_indices)] = absolute_indices
-                np.testing.assert_array_equal(
-                    streamed_indices, indices[:-1, :-1, :-1]
-                )
+                    streamed_indices[start : start + len(local_indices)] = (
+                        absolute_indices
+                    )
+                np.testing.assert_array_equal(streamed_indices, indices[:-1, :-1, :-1])
                 expected = np.sum(
                     self.snap.density[indices][:-1, :-1, :-1]
                     * (zspace[1:] - zspace[:-1]),
@@ -172,9 +172,7 @@ class GriddingTests(unittest.TestCase):
             "spacing": ("linear", "linear", "sinh"),
             "sinh_scale": scale,
         }
-        indices, xspace, yspace, zspace = self.snap.to_3dgrid(
-            **kwargs, workers=1
-        )
+        indices, xspace, yspace, zspace = self.snap.to_3dgrid(**kwargs, workers=1)
         transformed = np.linspace(
             np.arcsinh(-1 / 0.2), np.arcsinh(1 / 0.2), 11, endpoint=False
         )
@@ -182,13 +180,10 @@ class GriddingTests(unittest.TestCase):
         self.assertFalse(np.allclose(np.diff(zspace), np.diff(zspace)[0]))
 
         expected = np.sum(
-            self.snap.density[indices][:-1, :-1, :-1]
-            * (zspace[1:] - zspace[:-1]),
+            self.snap.density[indices][:-1, :-1, :-1] * (zspace[1:] - zspace[:-1]),
             axis=-1,
         ).in_base("cgs")
-        actual, actual_x, actual_y = self.snap.project(
-            "density", **kwargs, workers=8
-        )
+        actual, actual_x, actual_y = self.snap.project("density", **kwargs, workers=8)
         np.testing.assert_allclose(actual, expected, rtol=1e-14, atol=0)
         self.assert_unyt_equal(actual_x, xspace)
         self.assert_unyt_equal(actual_y, yspace)
@@ -211,9 +206,7 @@ class GriddingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported grid spacing"):
             self.snap.project("density", res=8, spacing=("linear", "linear", "log"))
         with self.assertRaisesRegex(ValueError, "sinh_scale is required"):
-            self.snap.project(
-                "density", res=8, spacing=("linear", "linear", "sinh")
-            )
+            self.snap.project("density", res=8, spacing=("linear", "linear", "sinh"))
         with self.assertRaisesRegex(ValueError, "strictly positive"):
             self.snap.project(
                 "density",

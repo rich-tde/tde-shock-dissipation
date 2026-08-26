@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #SBATCH --partition=gpu_strw
 #SBATCH --account=gpu_strw
 #SBATCH --job-name=shockfinder-ediss-analysis
@@ -9,13 +9,15 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=60G
-#SBATCH --mail-user="yujiehe@strw.leidenuniv.nl"
-#SBATCH --mail-type="ALL"
+#SBATCH --mail-user=yujiehe@strw.leidenuniv.nl
+#SBATCH --mail-type=ALL
 
-export MPLCONFIGDIR=/tmp/matplotlib-${USER}-${SLURM_JOB_ID}
-export IPYTHONDIR=/tmp/ipython-${USER}-${SLURM_JOB_ID}
+set -euo pipefail
 
-cd /home/hey4/rich_tde || exit 1
+export MPLCONFIGDIR="/tmp/matplotlib-${USER}-${SLURM_JOB_ID}"
+export IPYTHONDIR="/tmp/ipython-${USER}-${SLURM_JOB_ID}"
+
+cd /home/hey4/rich_tde
 /home/hey4/.conda/envs/richanalysis/bin/jupyter nbconvert \
     --to notebook \
     --execute \

@@ -56,20 +56,30 @@ def scalar_time(snap):
 def run_scales(run: str):
     """Return TDE scales in the RICH code-unit registry."""
 
-    mbh_value, mstar_value, rstar_value = TDE_PARAMETERS[run]
-    mbh = mbh_value * richio.units.mscale
-    mstar = mstar_value * richio.units.mscale
-    rstar = rstar_value * richio.units.lscale
-    r_p = rstar * (mbh / mstar) ** (1 / 3)
-    v_esc = np.sqrt(2 * u.G * mbh / r_p)
-    crossing_time = r_p / v_esc
+    black_hole_mass_value, stellar_mass_value, stellar_radius_value = TDE_PARAMETERS[
+        run
+    ]
+    black_hole_mass = black_hole_mass_value * richio.units.mscale
+    stellar_mass = stellar_mass_value * richio.units.mscale
+    stellar_radius = stellar_radius_value * richio.units.lscale
+    pericenter_radius = stellar_radius * (black_hole_mass / stellar_mass) ** (1 / 3)
+    escape_speed = np.sqrt(2 * u.G * black_hole_mass / pericenter_radius)
+    crossing_time = pericenter_radius / escape_speed
     fallback_time = (
         np.pi
         / np.sqrt(2)
-        * np.sqrt(rstar**3 / (u.G * mstar))
-        * np.sqrt(mbh / mstar)
+        * np.sqrt(stellar_radius**3 / (u.G * stellar_mass))
+        * np.sqrt(black_hole_mass / stellar_mass)
     )
-    return mbh, mstar, rstar, r_p, v_esc, crossing_time, fallback_time
+    return (
+        black_hole_mass,
+        stellar_mass,
+        stellar_radius,
+        pericenter_radius,
+        escape_speed,
+        crossing_time,
+        fallback_time,
+    )
 
 
 def needs_frame_switch(run: str, snapshot_path: Path) -> bool:
@@ -87,12 +97,12 @@ def bh_frame_coordinates_and_velocity(snap, run: str, snapshot_path: Path, scale
     vx, vy, vz = snap.vx, snap.vy, snap.vz
     switched = needs_frame_switch(run, snapshot_path)
     if switched:
-        mbh, mstar, rstar = scales[:3]
+        black_hole_mass, stellar_mass, stellar_radius = scales[:3]
         offset = dev.reference_frame_offset(
             t=scalar_time(snap),
-            Mbh=mbh,
-            Mstar=mstar,
-            Rstar=rstar,
+            Mbh=black_hole_mass,
+            Mstar=stellar_mass,
+            Rstar=stellar_radius,
             beta=1,
         )
         x, y = x + offset[0], y + offset[1]
@@ -145,9 +155,9 @@ def sums_and_ratios(
     rate_summed_kinetic = ((power / kinetic) * crossing_time).to_value("dimensionless")
     local_specific_kinetic = 0.5 * speed_squared[maximum_dissipation_index]
     deposited_specific_energy = power * crossing_time / mass
-    rate_local_velocity = (
-        deposited_specific_energy / local_specific_kinetic
-    ).to_value("dimensionless")
+    rate_local_velocity = (deposited_specific_energy / local_specific_kinetic).to_value(
+        "dimensionless"
+    )
     return {
         "mass_g": float(mass),
         "kinetic_erg": float(kinetic),
@@ -163,8 +173,16 @@ def analyse_snapshot(run: str, snapnum: int, snapshot_path: Path):
     """Load and analyse one snapshot, returning scalar output columns."""
 
     scales = run_scales(run)
-    mbh, _, _, r_p, v_esc, crossing_time, fallback_time = scales
-    schwarzschild_radius = 2 * u.G * mbh / u.c**2
+    (
+        black_hole_mass,
+        _,
+        _,
+        pericenter_radius,
+        escape_speed,
+        crossing_time,
+        fallback_time,
+    ) = scales
+    schwarzschild_radius = 2 * u.G * black_hole_mass / u.c**2
     snap = richio.load(snapshot_path)
     time = scalar_time(snap)
     x, y, z, vx, vy, vz, frame_switched = bh_frame_coordinates_and_velocity(
@@ -207,9 +225,7 @@ def analyse_snapshot(run: str, snapnum: int, snapshot_path: Path):
             "r={:.1f} R_s; recording NaN diagnostics",
             snapshot_path,
             float(
-                (radius[maximum_index] / schwarzschild_radius).to_value(
-                    "dimensionless"
-                )
+                (radius[maximum_index] / schwarzschild_radius).to_value("dimensionless")
             ),
         )
         nozzle = {
@@ -242,8 +258,8 @@ def analyse_snapshot(run: str, snapnum: int, snapshot_path: Path):
         "angular_half_width_deg": ANGULAR_HALF_WIDTH_DEG,
         "radial_limit_rs": RADIAL_LIMIT_RS,
         "schwarzschild_radius_cm": float(schwarzschild_radius.to_value("cm")),
-        "r_p_cm": float(r_p.to_value("cm")),
-        "v_esc_cm_s": float(v_esc.to_value("cm/s")),
+        "r_p_cm": float(pericenter_radius.to_value("cm")),
+        "v_esc_cm_s": float(escape_speed.to_value("cm/s")),
         "crossing_time_s": float(crossing_time.to_value("s")),
     }
     output.update({f"nozzle_{key}": value for key, value in nozzle.items()})
@@ -289,7 +305,9 @@ def main(
     output_root: Path = typer.Option(
         OUTPUT_ROOT, help="Root directory for per-run result files."
     ),
-    overwrite: bool = typer.Option(False, help="Replace existing per-snapshot results."),
+    overwrite: bool = typer.Option(
+        False, help="Replace existing per-snapshot results."
+    ),
 ):
     """Process all snapshots in one run, skipping completed outputs by default."""
 

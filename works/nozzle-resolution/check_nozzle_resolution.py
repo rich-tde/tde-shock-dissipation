@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Measure native-cell resolution in the compressed nozzle midplane."""
 
 from __future__ import annotations
@@ -11,11 +10,10 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+from dev.datapaths import TDE_PARAMETERS, _snapshot_times
 
 import dev
 import richio
-from dev.datapaths import TDE_PARAMETERS, _snapshot_times
-
 
 REQUESTED_TFBS = {
     "1e4": (0.5, 1.0, 1.5, 2.0),
@@ -64,7 +62,7 @@ def scan_snapshot(run: str, snapnum: int, path: Path, tfb: float) -> dict:
 
     with h5py.File(path, "r") as handle:
         time = scalar(handle["Time"])
-        dx, dy = frame_offset(run, path, time)
+        x_offset, y_offset = frame_offset(run, path, time)
         groups = sorted(
             (key for key in handle if key.startswith("rank")),
             key=lambda key: int(key[4:]),
@@ -73,34 +71,36 @@ def scan_snapshot(run: str, snapnum: int, path: Path, tfb: float) -> dict:
         count = cell_count(handle, groups)
 
         for prefix in prefixes:
-            x = np.asarray(handle[f"{prefix}X"]) + dx
-            y = np.asarray(handle[f"{prefix}Y"]) + dy
+            x = np.asarray(handle[f"{prefix}X"]) + x_offset
+            y = np.asarray(handle[f"{prefix}Y"]) + y_offset
             z = np.asarray(handle[f"{prefix}Z"])
             volume = np.asarray(handle[f"{prefix}Volume"])
 
             cylindrical_r2 = x * x + y * y
             diameter = 2.0 * (3.0 * volume / (4.0 * math.pi)) ** (1.0 / 3.0)
-            select = (
+            selection = (
                 (cylindrical_r2 > (0.6 * rp) ** 2)
                 & (cylindrical_r2 < (1.75 * rp) ** 2)
                 & (np.abs(z) <= diameter)
             )
-            if not np.any(select):
+            if not np.any(selection):
                 continue
-            selected_indices = np.flatnonzero(select)
-            local = int(selected_indices[np.argmin(volume[selected_indices])])
+            selected_indices = np.flatnonzero(selection)
+            local_index = int(selected_indices[np.argmin(volume[selected_indices])])
             candidate = {
                 "selection": "cylindrical_annulus_and_one_cell_diameter_midplane",
-                "volume_rsun3": float(volume[local]),
-                "diameter_rsun": float(diameter[local]),
-                "x_rp": float(x[local] / rp),
-                "y_rp": float(y[local] / rp),
-                "z_rp": float(z[local] / rp),
-                "z_rsun": float(z[local]),
-                "r_sph_rp": float(math.sqrt(cylindrical_r2[local] + z[local] ** 2) / rp),
-                "r_cyl_rp": float(math.sqrt(cylindrical_r2[local]) / rp),
+                "volume_rsun3": float(volume[local_index]),
+                "diameter_rsun": float(diameter[local_index]),
+                "x_rp": float(x[local_index] / rp),
+                "y_rp": float(y[local_index] / rp),
+                "z_rp": float(z[local_index] / rp),
+                "z_rsun": float(z[local_index]),
+                "r_sph_rp": float(
+                    math.sqrt(cylindrical_r2[local_index] + z[local_index] ** 2) / rp
+                ),
+                "r_cyl_rp": float(math.sqrt(cylindrical_r2[local_index]) / rp),
                 "rank": prefix[:-1] if prefix else "root",
-                "rank_index": local,
+                "rank_index": local_index,
             }
             if best is None or candidate["volume_rsun3"] < best["volume_rsun3"]:
                 best = candidate
@@ -129,14 +129,19 @@ def scan_snapshot(run: str, snapnum: int, path: Path, tfb: float) -> dict:
 def main(run: str) -> None:
     snapnums, paths, times = _snapshot_times(run)
     mbh, mstar, rstar = TDE_PARAMETERS[run]
-    tfb = math.pi / math.sqrt(2.0) * math.sqrt(rstar**3 / mstar) * math.sqrt(mbh / mstar)
-    time_tfbs = times / tfb
+    fallback_time = (
+        math.pi / math.sqrt(2.0) * math.sqrt(rstar**3 / mstar) * math.sqrt(mbh / mstar)
+    )
+    times_in_fallback_units = times / fallback_time
     indices = sorted(
-        {int(np.argmin(np.abs(time_tfbs - target))) for target in REQUESTED_TFBS[run]}
+        {
+            int(np.argmin(np.abs(times_in_fallback_units - target)))
+            for target in REQUESTED_TFBS[run]
+        }
         | {len(snapnums) - 1}
     )
     for index in indices:
-        result = scan_snapshot(run, snapnums[index], Path(paths[index]), tfb)
+        result = scan_snapshot(run, snapnums[index], Path(paths[index]), fallback_time)
         print(json.dumps(result), flush=True)
 
 

@@ -23,9 +23,7 @@ from richio import shockfinder as sf
 
 app = typer.Typer(add_completion=False)
 
-OUTPUT_ROOT = Path(
-    "/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection"
-)
+OUTPUT_ROOT = Path("/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection")
 REQUESTED_TFBS = {
     "1e4": (0.5, 1.0, 1.5, 2.0),
     "1e5": (0.3, 0.5),
@@ -40,9 +38,7 @@ def fallback_time_code(run: str) -> float:
     """Fallback time in RICH code units (G=1)."""
 
     mbh, mstar, rstar = TDE_PARAMETERS[run]
-    return float(
-        np.pi / np.sqrt(2) * np.sqrt(rstar**3 / mstar) * np.sqrt(mbh / mstar)
-    )
+    return float(np.pi / np.sqrt(2) * np.sqrt(rstar**3 / mstar) * np.sqrt(mbh / mstar))
 
 
 def selection() -> list[dict]:
@@ -126,9 +122,7 @@ def main(
         k=K_NEIGHBOURS,
         workers=workers,
     )
-    shock_zone = sf.find_shock_zone(
-        snap, vor, gamma=GAMMA, mach_min=MACH_MIN
-    )
+    shock_zone = sf.find_shock_zone(snap, vor, gamma=GAMMA, mach_min=MACH_MIN)
     result = sf.find_shock_surface(snap, vor, shock_zone, gamma=GAMMA)
 
     elapsed = time.perf_counter() - started

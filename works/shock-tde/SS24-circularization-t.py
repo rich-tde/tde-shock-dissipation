@@ -33,16 +33,16 @@ FIRST_TIMESERIES_SNAPSHOT = 809
 FALLBACK_BINS = 2048
 FALLBACK_SMOOTHING_BINS = 3.0
 
-RSTAR = 1.0 * richio.units.lscale
-MSTAR = 1.0 * richio.units.mscale
-MBH = 1.0e6 * richio.units.mscale
-RP = RSTAR * (MBH / MSTAR) ** (1 / 3)
-DELTA_EPSILON_TIDAL = u.G * MBH * RSTAR / RP**2
-TMIN = (
+STELLAR_RADIUS = 1.0 * richio.units.lscale
+STELLAR_MASS = 1.0 * richio.units.mscale
+BLACK_HOLE_MASS = 1.0e6 * richio.units.mscale
+PERICENTER_RADIUS = STELLAR_RADIUS * (BLACK_HOLE_MASS / STELLAR_MASS) ** (1 / 3)
+TIDAL_ENERGY_SPREAD = u.G * BLACK_HOLE_MASS * STELLAR_RADIUS / PERICENTER_RADIUS**2
+FALLBACK_TIME = (
     np.pi
     / np.sqrt(2)
-    * (RSTAR**3 / u.G / MSTAR) ** (1 / 2)
-    * (MBH / MSTAR) ** (1 / 2)
+    * (STELLAR_RADIUS**3 / u.G / STELLAR_MASS) ** (1 / 2)
+    * (BLACK_HOLE_MASS / STELLAR_MASS) ** (1 / 2)
 )
 
 TIMESERIES_HEADER = (
@@ -143,7 +143,11 @@ def bh_frame(snapshot, snapshot_path, time):
         )
 
     offset = dev.reference_frame_offset(
-        t=time, Mbh=MBH, Mstar=MSTAR, Rstar=RSTAR, beta=1
+        t=time,
+        Mbh=BLACK_HOLE_MASS,
+        Mstar=STELLAR_MASS,
+        Rstar=STELLAR_RADIUS,
+        beta=1,
     )
     return (
         snapshot.X + offset[0],
@@ -160,23 +164,31 @@ def orbital_specific_energy(snapshot, snapshot_path, time):
     radius = np.sqrt(x**2 + y**2 + z**2)
     speed_squared = vx**2 + vy**2 + vz**2
 
-    rg = u.G * MBH / u.c**2
-    h = 0.6 * RP
-    potential = -u.G * MBH / (radius - 2 * rg)
-    inner = radius < h
+    gravitational_radius = u.G * BLACK_HOLE_MASS / u.c**2
+    softening_radius = 0.6 * PERICENTER_RADIUS
+    potential = -u.G * BLACK_HOLE_MASS / (radius - 2 * gravitational_radius)
+    inner = radius < softening_radius
     if np.any(inner):
-        phi_h = -u.G * MBH / (h - 2 * rg)
-        omega_squared = u.G * MBH / (h * (h - 2 * rg) ** 2)
-        inner_potential = phi_h + 0.5 * omega_squared * (radius[inner] ** 2 - h**2)
+        boundary_potential = (
+            -u.G * BLACK_HOLE_MASS / (softening_radius - 2 * gravitational_radius)
+        )
+        omega_squared = (
+            u.G
+            * BLACK_HOLE_MASS
+            / (softening_radius * (softening_radius - 2 * gravitational_radius) ** 2)
+        )
+        inner_potential = boundary_potential + 0.5 * omega_squared * (
+            radius[inner] ** 2 - softening_radius**2
+        )
         potential[inner] = inner_potential.to(potential.units)
 
-    return (0.5 * speed_squared + potential).to(
-        "code_length**2/code_time**2"
-    )
+    return (0.5 * speed_squared + potential).to("code_length**2/code_time**2")
 
 
 def save_fallback_profile(path, snapnum, time, specific_energy, cell_mass):
-    bound = np.isfinite(specific_energy) & np.isfinite(cell_mass) & (specific_energy < 0)
+    bound = (
+        np.isfinite(specific_energy) & np.isfinite(cell_mass) & (specific_energy < 0)
+    )
     energy = specific_energy[bound].to_value("erg/g")
     mass = cell_mass[bound].to_value("g")
     if energy.size == 0 or np.sum(mass) <= 0:
@@ -188,7 +200,7 @@ def save_fallback_profile(path, snapnum, time, specific_energy, cell_mass):
     # makes those bins tens of times wider than the 0.40 d bins.  The actual
     # first-return debris lies near -Delta_epsilon_tidal; -2.5 Delta safely
     # contains it at both epochs while excluding the irrelevant deep tail.
-    lower_edge = (-2.5 * DELTA_EPSILON_TIDAL).to_value("erg/g")
+    lower_edge = (-2.5 * TIDAL_ENERGY_SPREAD).to_value("erg/g")
     excluded_mass = np.sum(mass[energy < lower_edge])
     if excluded_mass > 0:
         logger.info(
@@ -208,18 +220,16 @@ def save_fallback_profile(path, snapnum, time, specific_energy, cell_mass):
 
     energy_quantity = u.unyt_array(centers, "erg/g")
     return_time = (
-        2 * np.pi * u.G * MBH / (2 * np.abs(energy_quantity)) ** 1.5
+        2 * np.pi * u.G * BLACK_HOLE_MASS / (2 * np.abs(energy_quantity)) ** 1.5
     ).to("day")
     dedt = (
         (1 / 3)
-        * (2 * np.pi * u.G * MBH) ** (2 / 3)
+        * (2 * np.pi * u.G * BLACK_HOLE_MASS) ** (2 / 3)
         * return_time.to("s") ** (-5 / 3)
     ).to("erg/g/s")
     dmdenergy_unit = "g/(erg/g)"
     mdot_raw = (u.unyt_array(dmdenergy_raw, dmdenergy_unit) * dedt).to("Msun/yr")
-    mdot_smooth = (
-        u.unyt_array(dmdenergy_smooth, dmdenergy_unit) * dedt
-    ).to("Msun/yr")
+    mdot_smooth = (u.unyt_array(dmdenergy_smooth, dmdenergy_unit) * dedt).to("Msun/yr")
 
     order = np.argsort(return_time)
     temporary = f"{path}.tmp"
@@ -285,7 +295,9 @@ def main(
     ) = arrays
     remaining_completed = Counter(snapnums)
     if snapnums:
-        logger.info("Resuming {} with {} completed rows", timeseries_file, len(snapnums))
+        logger.info(
+            "Resuming {} with {} completed rows", timeseries_file, len(snapnums)
+        )
 
     for directory in DATADIRS:
         logger.info("Scanning {}", directory)
@@ -336,7 +348,7 @@ def main(
                 snapnums.append(snapnum)
                 times.append(time)
                 times_days.append(time_day)
-                tfallbacks.append(time / TMIN)
+                tfallbacks.append(time / FALLBACK_TIME)
                 eorb_bounds.append(bound_orbital_energy)
                 mbounds.append(bound_mass)
                 ediss_totals.append(dissipation_power)
@@ -345,7 +357,7 @@ def main(
                     "snap={} day={:.6f} tfb={:.6f} Ebound={} Mbound={} Ediss={}",
                     snapnum,
                     time_day.to_value(),
-                    (time / TMIN).to_value(),
+                    (time / FALLBACK_TIME).to_value(),
                     bound_orbital_energy,
                     bound_mass,
                     dissipation_power,
@@ -360,7 +372,7 @@ def main(
                         eorb_bounds,
                         mbounds,
                         ediss_totals,
-                    ]
+                    ],
                 )
 
 

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #SBATCH --job-name=vr_windproj
 #SBATCH --partition=gpu_strw
 #SBATCH --account=gpu_strw
@@ -7,8 +7,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=58G
 #SBATCH --time=04:00:00
-#SBATCH --output=jobs/vr_windproj_%j.out
-#SBATCH --error=jobs/vr_windproj_%j.err
+#SBATCH --output=/home/hey4/rich_tde/jobs/logs/%j_%x.out
 
 # Wind-projection evolution movie: per-snapshot 2x3 panels (density top,
 # dissipation bottom; xy/xz/yz columns) of the unbound wind (B>0 & v_r>0),
@@ -21,7 +20,7 @@
 #   VMIN    = per-field log10 vmin overrides 'density,dissipation' (blank = auto)
 #   TAG     = label used in the output filename (wide | narrow | zoom | ...)
 set -euo pipefail
-cd /zfsstore/user/hey4/rich_tde
+cd /home/hey4/rich_tde
 
 PY=/home/hey4/.conda/envs/richanalysis/bin/python
 export MPLBACKEND=Agg
@@ -32,13 +31,15 @@ TAG="${TAG:-wide}"
 RUN=/data1/projects/pi-rossiem/TDE_data/R0.47M0.5BH10000beta1S60n1.5ComptonHiResNewAMR
 
 # Explicit BOX wins over the symmetric BOXHALF cube.
-if [ -n "${BOX:-}" ]; then
+if [[ -n "${BOX:-}" ]]; then
   boxflag=(--box "$BOX")
 else
   boxflag=(--box-half "$BOXHALF")
 fi
 vminflag=()
-if [ -n "${VMIN:-}" ]; then vminflag=(--vmin "$VMIN"); fi
+if [[ -n "${VMIN:-}" ]]; then
+  vminflag=(--vmin "${VMIN}")
+fi
 
 OUTDIR=reports/movies/wind_proj
 mkdir -p "$OUTDIR"
@@ -46,7 +47,7 @@ OUT="${OUTDIR}/wind_proj_${TAG}.mp4"
 
 echo "Host: $(hostname)  BOXHALF=$BOXHALF BOX=${BOX:-} VMIN=${VMIN:-} TAG=$TAG -> $OUT  Started: $(date)"
 
-$PY works/movies/render_wind_proj_evolution.py "$RUN" \
+"${PY}" works/movies/render_wind_proj_evolution.py "${RUN}" \
     --start 21 --end 151 \
     --coords CMx,CMy,CMz \
     --res 512 \

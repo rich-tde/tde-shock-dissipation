@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #SBATCH --job-name=vr_rosseland
 #SBATCH --partition=gpu_strw
 #SBATCH --account=gpu_strw
@@ -7,8 +7,7 @@
 #SBATCH --cpus-per-task=48
 #SBATCH --mem=61G
 #SBATCH --time=7-00:00:00
-#SBATCH --output=jobs/logs/vr_rosseland_%j.out
-#SBATCH --error=jobs/logs/vr_rosseland_%j.err
+#SBATCH --output=/home/hey4/rich_tde/jobs/logs/%j_%x.out
 
 # Rosseland optical-depth movie: tau = int alpha_ross dr (works/movies/render_rosseland_movie.py).
 # Single derived field (not stored on disk, not registered in richio) -- lighter
@@ -29,7 +28,7 @@
 #   START,END  = snapshot range (default 21..151)
 #   STEP       = use every Nth snapshot (default 1)
 set -euo pipefail
-cd /zfsstore/user/hey4/rich_tde
+cd /home/hey4/rich_tde
 
 PY=/home/hey4/.conda/envs/richanalysis/bin/python
 export MPLBACKEND=Agg
@@ -43,10 +42,10 @@ VMIN="${VMIN:-}"
 VMAX="${VMAX:-}"
 RES="${RES:-1024}"
 RESOLUTION="${RESOLUTION:-1024}"
-# cpu-zen4 (128c/384G): NJOBS=5 (~250-290G, memory-safe -- NJOBS=6 caused a few
-# oom_kill events) with WORKERS=25 (NJOBS*WORKERS<=128).
-NJOBS="${NJOBS:-5}"
-WORKERS="${WORKERS:-25}"
+# Safe direct-submit defaults for the gpu_strw directives above. The cpu-zen4
+# submission wrapper overrides these with its tested 384G-node settings.
+NJOBS="${NJOBS:-2}"
+WORKERS="${WORKERS:-24}"
 START="${START:-21}"
 END="${END:-151}"
 STEP="${STEP:-1}"
@@ -67,7 +66,7 @@ echo "Host: $(hostname)  CAMERA=$CAMERA BOX=$BOX RES=$RES RESOLUTION=$RESOLUTION
 " NJOBS=$NJOBS WORKERS=$WORKERS FRAMES_ROOT=${FRAMES_ROOT:-/tmp} KEEP=$KEEP_FRAMES"\
 " -> $OUTDIR/${TAG}_${CAMERA}_${BOX}.mp4  Started: $(date)"
 
-$PY works/movies/render_rosseland_movie.py "$RUN" \
+"${PY}" works/movies/render_rosseland_movie.py "${RUN}" \
     --camera "$CAMERA" \
     --box "$BOX" \
     --scalebar \

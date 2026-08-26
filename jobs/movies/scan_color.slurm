@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #SBATCH --job-name=cr_scan
 #SBATCH --partition=cpu-short
 #SBATCH --account=strw
@@ -7,8 +7,7 @@
 #SBATCH --cpus-per-task=48
 #SBATCH --mem=120G
 #SBATCH --time=0:40:00
-#SBATCH --output=jobs/logs/cr_scan_%j.out
-#SBATCH --error=jobs/logs/cr_scan_%j.err
+#SBATCH --output=/home/hey4/rich_tde/jobs/logs/%j_%x.out
 
 # Scan first+last snapshots for fixed projection colour limits, per (box, camera).
 # Serial builds (one index at a time) -> all cores on the KDTree query.  Scans at
@@ -23,7 +22,7 @@
 #   RES     = scan interpolation res                              default: 512
 #   OUT     = output JSON                          default: reports/movies/color_ranges.json
 set -euo pipefail
-cd /zfsstore/user/hey4/rich_tde
+cd /home/hey4/rich_tde
 PY=/home/hey4/.conda/envs/richanalysis/bin/python
 export MPLBACKEND=Agg
 export OMP_NUM_THREADS=1
@@ -36,7 +35,7 @@ RES="${RES:-512}"
 OUT="${OUT:-reports/movies/color_ranges.json}"
 
 echo "Host: $(hostname)  CAMERAS=$CAMERAS BOXES=$BOXES SNAPS=$SNAPS RES=$RES -> $OUT  Started: $(date)"
-$PY works/movies/scan_color_range.py "$RUN" \
+"${PY}" works/movies/scan_color_range.py "${RUN}" \
     --boxes "$BOXES" --snaps "$SNAPS" --cameras "$CAMERAS" \
     --res "$RES" --resolution "$RES" --workers 48 --out "$OUT"
 echo "Finished: $(date)"

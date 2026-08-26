@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #SBATCH --job-name=vr_multi
 #SBATCH --partition=gpu_strw
 #SBATCH --account=gpu_strw
@@ -7,8 +7,7 @@
 #SBATCH --cpus-per-task=48
 #SBATCH --mem=61G
 #SBATCH --time=20:00:00
-#SBATCH --output=jobs/logs/vr_multi_%j.out
-#SBATCH --error=jobs/logs/vr_multi_%j.err
+#SBATCH --output=/home/hey4/rich_tde/jobs/logs/%j_%x.out
 
 # Multi-field, shared-index evolution-movie driver (works/movies/render_evolution_multi.py).
 # Builds the geometry-only KDTree index ONCE per snapshot and projects every field
@@ -57,10 +56,10 @@
 #
 # cpu-short BURST fallback (only when gpu_strw is busy; account=strw, 4 h cap):
 #   sbatch --partition=cpu-short --account=strw --time=4:00:00 \
-#          --cpus-per-task=64 --mem=240G --export=ALL,NJOBS=8,WORKERS=8,... render_multi.slurm
+#          --cpus-per-task=64 --mem=240G --export=ALL,NJOBS=8,WORKERS=8,... jobs/movies/render_multi.slurm
 # ----------------------------------------------------------------------------
 set -euo pipefail
-cd /zfsstore/user/hey4/rich_tde
+cd /home/hey4/rich_tde
 
 PY=/home/hey4/.conda/envs/richanalysis/bin/python
 export MPLBACKEND=Agg
@@ -119,7 +118,7 @@ echo "Host: $(hostname)  FIELDS=$FIELDS BOX=$BOX AZ=$AZ EL=$EL RES=$RES RESOLUTI
 " NJOBS=$NJOBS WORKERS=$WORKERS SPIN=$SPINFRAMES FONT=$RICHIO_FONT_SCALE MODE=$MODE"\
 " frames[$FRAME_START,$FRAME_STOP) -> $OUTDIR/$NAME_TMPL  Started: $(date)"
 
-$PY works/movies/render_evolution_multi.py "$RUN" \
+"${PY}" works/movies/render_evolution_multi.py "${RUN}" \
     --fields "$FIELDS" \
     --box "$BOX" \
     --azimuth "$AZ" \

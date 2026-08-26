@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Validate dissipation-percentile selections for nozzle timescale columns.
 
 Stage 1 only: interpolate density and dissipation inside ``r < 3 r_p``,
@@ -19,19 +18,18 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-nozzle-selection")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
-import dev
+import dev  # isort: skip  # Configure plotting style before importing pyplot.
 import matplotlib.pyplot as plt
 import numpy as np
 import typer
 import unyt as u
+from dev.datapaths import TDE_PARAMETERS
 from loguru import logger
+from richio.plots import scalar_map
 from scipy import ndimage
 
 import richio
 from dev import DATAPATHS, SNAPSHOT_TFB
-from dev.datapaths import TDE_PARAMETERS
-from richio.plots import scalar_map
-
 
 OUTPUT_ROOT = Path(
     "/home/hey4/rich_tde/data/processed/CoolingChecks/"
@@ -91,8 +89,7 @@ def selected_snapshots(run: str) -> list[tuple[int, Path, bool]]:
         old = deduplicated.get(snapnum)
         deduplicated[snapnum] = (Path(path), is_last or (old[1] if old else False))
     return [
-        (snapnum, path, is_last)
-        for snapnum, (path, is_last) in deduplicated.items()
+        (snapnum, path, is_last) for snapnum, (path, is_last) in deduplicated.items()
     ]
 
 
@@ -159,7 +156,9 @@ def build_column_cache(
     radius = np.sqrt(x**2 + y**2 + z**2)
     source_selection = np.asarray(radius < APERTURE_RP * r_p, dtype=bool)
     if not np.any(source_selection):
-        raise ValueError(f"No source cells inside {APERTURE_RP} r_p for {snapshot_path}")
+        raise ValueError(
+            f"No source cells inside {APERTURE_RP} r_p for {snapshot_path}"
+        )
     source_indices = np.flatnonzero(source_selection)
     native_peak_index = source_indices[
         int(np.nanargmax(np.asarray(snapshot.dissipation[source_selection])))
@@ -189,13 +188,19 @@ def build_column_cache(
 
     dissipation_density = snapshot.dissipation[indices].in_cgs()
     density = snapshot.rho[indices].in_cgs()
-    dissipation_column = np.sum(
-        np.where(spherical_mask, dissipation_density, 0 * dissipation_density.units),
-        axis=-1,
-    ) * dz.in_cgs()
-    surface_density = np.sum(
-        np.where(spherical_mask, density, 0 * density.units), axis=-1
-    ) * dz.in_cgs()
+    dissipation_column = (
+        np.sum(
+            np.where(
+                spherical_mask, dissipation_density, 0 * dissipation_density.units
+            ),
+            axis=-1,
+        )
+        * dz.in_cgs()
+    )
+    surface_density = (
+        np.sum(np.where(spherical_mask, density, 0 * density.units), axis=-1)
+        * dz.in_cgs()
+    )
     eligible_columns = np.any(spherical_mask, axis=-1)
 
     arrays = {
@@ -239,8 +244,8 @@ def percentile_metrics(
 ) -> tuple[np.ndarray, dict[str, float | int]]:
     """Return a high-dissipation mask and its selection-quality metrics."""
 
-    candidates = eligible_columns & np.isfinite(dissipation_column) & (
-        dissipation_column > 0
+    candidates = (
+        eligible_columns & np.isfinite(dissipation_column) & (dissipation_column > 0)
     )
     if not np.any(candidates):
         raise ValueError("No finite positive dissipation columns")
@@ -254,9 +259,7 @@ def percentile_metrics(
     largest_label = int(np.argmax(component_sizes)) + 1
     largest = labels == largest_label
 
-    maximum_flat = int(
-        np.nanargmax(np.where(candidates, dissipation_column, np.nan))
-    )
+    maximum_flat = int(np.nanargmax(np.where(candidates, dissipation_column, np.nan)))
     maximum_index = np.unravel_index(maximum_flat, dissipation_column.shape)
     maximum_label = int(labels[maximum_index])
     peak_component = labels == maximum_label
@@ -365,11 +368,13 @@ def render_validation(cache_path: Path, output_path: Path) -> list[dict]:
     log_dissipation = positive_log10(dissipation)
     log_surface_density = positive_log10(surface_density)
     finite_dissipation = log_dissipation[np.isfinite(log_dissipation) & eligible]
-    finite_surface_density = log_surface_density[np.isfinite(log_surface_density) & eligible]
+    finite_surface_density = log_surface_density[
+        np.isfinite(log_surface_density) & eligible
+    ]
     diss_limits = tuple(np.nanpercentile(finite_dissipation, (1, 100)))
     sigma_limits = tuple(np.nanpercentile(finite_surface_density, (1, 100)))
 
-    fig, axes = plt.subplots(2, 4, figsize=(20, 10), sharex=True, sharey=True)
+    fig, axes = plt.subplots(2, 4, figsize=(14, 7), sharex=True, sharey=True)
     scalar_map(
         log_surface_density,
         x_rp,
@@ -501,10 +506,6 @@ def render_validation(cache_path: Path, output_path: Path) -> list[dict]:
         ax.set_ylim(-APERTURE_RP, APERTURE_RP)
         ax.set_xlabel(r"$x/r_p$")
         ax.set_ylabel(r"$y/r_p$")
-    fig.suptitle(
-        rf"{run}, snapshot {snapnum}, $t/t_{{\rm fb}}={time_tfb:.3f}$, "
-        rf"${resolution}^3$, $r<3r_p$"
-    )
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=180)
@@ -525,7 +526,9 @@ def write_csv(path: Path, rows: list[dict]) -> None:
 
 
 def convergence_rows(rows: list[dict], resolutions: tuple[int, ...]) -> list[dict]:
-    by_key = {(row["snapnum"], row["percentile"], row["resolution"]): row for row in rows}
+    by_key = {
+        (row["snapnum"], row["percentile"], row["resolution"]): row for row in rows
+    }
     output = []
     for snapnum in sorted({row["snapnum"] for row in rows}):
         for percentile in PERCENTILES:
@@ -597,7 +600,9 @@ def convergence_rows(rows: list[dict], resolutions: tuple[int, ...]) -> list[dic
 def main(
     mode: int = typer.Option(..., min=1, max=3, help="1: 1e4, 2: 1e5, 3: 1e6"),
     workers: int = typer.Option(8, min=1, help="KD-tree query threads"),
-    output_root: Path = typer.Option(OUTPUT_ROOT, help="Stage-1 output directory"),
+    output_root: Path = typer.Option(  # noqa: B008 - Typer declares options in defaults.
+        OUTPUT_ROOT, help="Stage-1 output directory"
+    ),
     overwrite: bool = typer.Option(False, help="Rebuild existing column caches"),
     rerender: bool = typer.Option(False, help="Redraw figures from valid caches"),
     list_only: bool = typer.Option(False, help="List work without loading snapshots"),
@@ -605,7 +610,8 @@ def main(
         None, min=0, help="Only process this zero-based representative-snapshot index"
     ),
     resolutions: str = typer.Option(
-        "256,384", help="Comma-separated grid resolutions (small values are for smoke tests)"
+        "256,384",
+        help="Comma-separated grid resolutions (small values are for smoke tests)",
     ),
 ) -> None:
     config = RUNS[mode]
@@ -619,11 +625,19 @@ def main(
     try:
         requested_resolutions = tuple(int(value) for value in resolutions.split(","))
     except ValueError as error:
-        raise typer.BadParameter("resolutions must be comma-separated integers") from error
+        raise typer.BadParameter(
+            "resolutions must be comma-separated integers"
+        ) from error
     if not requested_resolutions or any(value < 2 for value in requested_resolutions):
         raise typer.BadParameter("every resolution must be at least 2")
     for snapnum, path, is_last in selected:
-        logger.info("{} snapshot {}: {}{}", config.run, snapnum, path, " (last)" if is_last else "")
+        logger.info(
+            "{} snapshot {}: {}{}",
+            config.run,
+            snapnum,
+            path,
+            " (last)" if is_last else "",
+        )
     if list_only:
         return
 
@@ -631,15 +645,23 @@ def main(
     all_rows = []
     for resolution in requested_resolutions:
         for snapnum, snapshot_path, _ in selected:
-            cache_path = run_root / "columns" / (
-                f"selection_snap_{snapnum:04d}_{resolution}.npz"
+            cache_path = (
+                run_root
+                / "columns"
+                / (f"selection_snap_{snapnum:04d}_{resolution}.npz")
             )
-            figure_path = run_root / "figures" / (
-                f"selection_snap_{snapnum:04d}_{resolution}.png"
+            figure_path = (
+                run_root
+                / "figures"
+                / (f"selection_snap_{snapnum:04d}_{resolution}.png")
             )
             if overwrite or not cache_complete(cache_path, resolution):
-                logger.info("Gridding {} snapshot {} at {}^3", config.run, snapnum, resolution)
-                build_column_cache(snapshot_path, cache_path, config, resolution, workers)
+                logger.info(
+                    "Gridding {} snapshot {} at {}^3", config.run, snapnum, resolution
+                )
+                build_column_cache(
+                    snapshot_path, cache_path, config, resolution, workers
+                )
             else:
                 logger.info("Using cached {}", cache_path)
             if rerender or not figure_path.is_file() or figure_path.stat().st_size == 0:

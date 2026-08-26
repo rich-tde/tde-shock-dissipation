@@ -77,7 +77,7 @@ def returning_orbit(run, time_tfb):
 
 
 fig, axes = plt.subplots(1, 3, figsize=(11.5, 3.9), constrained_layout=True)
-for ax, (run, (snapshot, time_tfb)) in zip(axes, SELECTED.items(), strict=True):
+for axis, (run, (snapshot, time_tfb)) in zip(axes, SELECTED.items(), strict=True):
     cache = (
         REPO
         / f"data/processed/NozzleZoomSlices/{run}/grids"
@@ -92,7 +92,7 @@ for ax, (run, (snapshot, time_tfb)) in zip(axes, SELECTED.items(), strict=True):
         density,
         x_grid,
         y_grid,
-        ax=ax,
+        ax=axis,
         cmap="twilight",
         colorbar_label=r"$\log_{10}(\rho/[\mathrm{g\,cm^{-3}}])$",
         log_scale=False,
@@ -102,19 +102,19 @@ for ax, (run, (snapshot, time_tfb)) in zip(axes, SELECTED.items(), strict=True):
     )
     image.colorbar.remove()
     orbit_x, orbit_y, orbit_phi = returning_orbit(run, time_tfb)
-    ax.plot(orbit_x, orbit_y, color="red", linewidth=1.6)
-    ax.scatter(
+    axis.plot(orbit_x, orbit_y, color="red", linewidth=1.6)
+    axis.scatter(
         orbit_x[np.argmin(abs(orbit_phi))],
         orbit_y[np.argmin(abs(orbit_phi))],
         s=18,
         color="red",
         zorder=3,
     )
-    ax.set_xlim(XY_WINDOW_RP[:2])
-    ax.set_ylim(XY_WINDOW_RP[2:])
-    ax.set_box_aspect(1)
-    ax.set_title(rf"$10^{{{run[-1]}}}\,M_\odot$")
-    ax.set_xlabel(r"$x/r_p$")
+    axis.set_xlim(XY_WINDOW_RP[:2])
+    axis.set_ylim(XY_WINDOW_RP[2:])
+    axis.set_box_aspect(1)
+    axis.set_title(rf"$10^{{{run[-1]}}}\,M_\odot$")
+    axis.set_xlabel(r"$x/r_p$")
 
 axes[0].set_ylabel(r"$y/r_p$")
 OUTPUT.parent.mkdir(parents=True, exist_ok=True)

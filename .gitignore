@@ -197,5 +197,6 @@ cython_debug/
 logs
 reports
 *.txt
+*.orig
 .vscode
 .claude

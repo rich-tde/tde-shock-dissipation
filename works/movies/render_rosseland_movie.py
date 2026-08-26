@@ -34,7 +34,9 @@ import render_evolution_multi  # _index_map, _box_geometry
 import tde_frame  # make_bh_frame_loader
 
 # Opacity interpolation is a general analysis helper and remains under scripts/.
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "scripts")))
+sys.path.insert(
+    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "scripts"))
+)
 import opacity_interpolator
 
 #: Named camera presets (azimuth, elevation), matching scan_color_range.py /
@@ -64,11 +66,19 @@ def _opacity_grid(snap, i, bbox, dims, tval, tunit, coords, unit_system="cgs"):
         np.asarray(T_cgs, dtype="float64"), np.asarray(rho_cgs, dtype="float64")
     )  # unyt_array, cm**-1
     cube = sigma[i].in_base(unit_system)
-    fields = {"rosseland_alpha": np.ascontiguousarray(np.asarray(cube), dtype="float64")}
+    fields = {
+        "rosseland_alpha": np.ascontiguousarray(np.asarray(cube), dtype="float64")
+    }
     units = {"rosseland_alpha": str(cube.units)}
     return UniformGrid(
-        fields=fields, units=units,
-        bbox=bbox, dims=dims, length_unit="cm", time=tval, time_unit=tunit, coords=coords,
+        fields=fields,
+        units=units,
+        bbox=bbox,
+        dims=dims,
+        length_unit="cm",
+        time=tval,
+        time_unit=tunit,
+        coords=coords,
     )
 
 
@@ -78,12 +88,27 @@ def _render_frame(snap, i, bbox, dims, tval, tunit, annotate, idx, cfg, view):
     grid = _opacity_grid(snap, i, bbox, dims, tval, tunit, cfg["coords"])
     out_png = os.path.join(view["frames_dir"], f"frame_{idx:05d}.png")
     volume_image(
-        snap, "rosseland_alpha", grid=grid, mode="projection", weight=None,
-        flip_x=cfg["flip_x"], log=True, norm="log", vmin=cfg["vmin"], vmax=cfg["vmax"],
-        cmap="inferno", colorbar=True, resolution=cfg["resolution"],
-        azimuth=cfg["azimuth"], elevation=cfg["elevation"], zoom=view["zoom"],
-        rot_axis=(0.0, 0.0, 1.0), annotate=annotate, axis_triad=True,
-        scalebar_frac=view["scalebar_frac"], scalebar_label=view["scalebar_label"],
+        snap,
+        "rosseland_alpha",
+        grid=grid,
+        mode="projection",
+        weight=None,
+        flip_x=cfg["flip_x"],
+        log=True,
+        norm="log",
+        vmin=cfg["vmin"],
+        vmax=cfg["vmax"],
+        cmap="inferno",
+        colorbar=True,
+        resolution=cfg["resolution"],
+        azimuth=cfg["azimuth"],
+        elevation=cfg["elevation"],
+        zoom=view["zoom"],
+        rot_axis=(0.0, 0.0, 1.0),
+        annotate=annotate,
+        axis_triad=True,
+        scalebar_frac=view["scalebar_frac"],
+        scalebar_label=view["scalebar_label"],
         filename=out_png,
     )
 
@@ -110,7 +135,11 @@ def _render_evolution_frame(task):
     if not todo:
         return idx  # already rendered — resume
     snap = richio.load(path)
-    annotate = _evolution_label(snap, path, cfg["days_per_tfb"]) if cfg["annotate_time"] else None
+    annotate = (
+        _evolution_label(snap, path, cfg["days_per_tfb"])
+        if cfg["annotate_time"]
+        else None
+    )
     for view in todo:
         sel = view["selection_fn"](snap) if view["selection_fn"] is not None else None
         i, bbox, dims, tval, tunit = render_evolution_multi._index_map(
@@ -121,8 +150,9 @@ def _render_evolution_frame(task):
     return idx
 
 
-def _make_view(name, box, res, zoom, scalebar_frac, scalebar_label, selection_fn,
-               frames_root):
+def _make_view(
+    name, box, res, zoom, scalebar_frac, scalebar_label, selection_fn, frames_root
+):
     """One rendered view: a box + camera + its own frame directory.
 
     Single-field sibling of :func:`render_evolution_multi._make_view`; *name* is
@@ -131,17 +161,29 @@ def _make_view(name, box, res, zoom, scalebar_frac, scalebar_label, selection_fn
     sub = f"rosseland_alpha_{name}" if name else "rosseland_alpha"
     frames_dir = os.path.join(frames_root, sub)
     os.makedirs(frames_dir, exist_ok=True)
-    return dict(name=name, box=box, res=res, zoom=zoom, scalebar_frac=scalebar_frac,
-                scalebar_label=scalebar_label, selection_fn=selection_fn,
-                frames_dir=frames_dir)
+    return dict(
+        name=name,
+        box=box,
+        res=res,
+        zoom=zoom,
+        scalebar_frac=scalebar_frac,
+        scalebar_label=scalebar_label,
+        selection_fn=selection_fn,
+        frames_dir=frames_dir,
+    )
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("run_dir")
-    p.add_argument("--camera", default="faceon", choices=sorted(CAMERAS),
-                   help="Named camera preset; overridden by --azimuth/--elevation if given.")
+    p.add_argument(
+        "--camera",
+        default="faceon",
+        choices=sorted(CAMERAS),
+        help="Named camera preset; overridden by --azimuth/--elevation if given.",
+    )
     p.add_argument("--azimuth", type=float, default=None)
     p.add_argument("--elevation", type=float, default=None)
     p.add_argument("--box", default="A", choices=sorted(render_evolution.BOX_PRESETS))
@@ -149,23 +191,35 @@ def main(argv=None):
     p.add_argument("--start", type=int, default=21)
     p.add_argument("--end", type=int, default=151)
     p.add_argument("--step", type=int, default=1)
-    p.add_argument("--res", type=int, default=1024, help="Interpolation grid resolution.")
+    p.add_argument(
+        "--res", type=int, default=1024, help="Interpolation grid resolution."
+    )
     p.add_argument("--resolution", type=int, default=1024, help="Output image px.")
     p.add_argument("--zoom", type=float, default=1.1)
-    p.add_argument("--vmin", type=float, default=None, help="Fixed colorbar vmin (tau, log).")
-    p.add_argument("--vmax", type=float, default=None, help="Fixed colorbar vmax (tau, log).")
+    p.add_argument(
+        "--vmin", type=float, default=None, help="Fixed colorbar vmin (tau, log)."
+    )
+    p.add_argument(
+        "--vmax", type=float, default=None, help="Fixed colorbar vmax (tau, log)."
+    )
     p.add_argument("--scalebar", action="store_true")
     p.add_argument("--bh-frame", action="store_true")
     p.add_argument("--flip-x", action="store_true")
-    p.add_argument("--no-annotate", action="store_true", help="Drop the time/snap label.")
+    p.add_argument(
+        "--no-annotate", action="store_true", help="Drop the time/snap label."
+    )
     p.add_argument("--m-bh", type=float, default=1e4)
     p.add_argument("--m-star", type=float, default=0.5)
     p.add_argument("--r-star", type=float, default=0.47)
     p.add_argument("--beta", type=float, default=1.0)
     p.add_argument("--switch-snap", type=int, default=21)
     p.add_argument("--days-per-tfb", type=float, default=None)
-    p.add_argument("--workers", type=int, default=24, help="KDTree query threads per build.")
-    p.add_argument("--n-jobs", type=int, default=2, help="Frame-parallel worker processes.")
+    p.add_argument(
+        "--workers", type=int, default=24, help="KDTree query threads per build."
+    )
+    p.add_argument(
+        "--n-jobs", type=int, default=2, help="Frame-parallel worker processes."
+    )
     p.add_argument("--fps", type=int, default=24)
     p.add_argument("--outdir", default="reports/movies/rosseland")
     p.add_argument("--tag", default="rosseland")
@@ -177,10 +231,14 @@ def main(argv=None):
     os.environ.setdefault("OMP_NUM_THREADS", "1")
 
     import richio
+
     if args.bh_frame:
         richio.load = tde_frame.make_bh_frame_loader(
-            m_bh=args.m_bh, m_star=args.m_star, r_star=args.r_star,
-            beta=args.beta, switch_snap=args.switch_snap,
+            m_bh=args.m_bh,
+            m_star=args.m_star,
+            r_star=args.r_star,
+            beta=args.beta,
+            switch_snap=args.switch_snap,
         )
     from richio.render.yt_backend import _cleanup_frames, _encode_movie
 
@@ -191,7 +249,9 @@ def main(argv=None):
     coords = tuple(args.coords.split(","))
     box = render_evolution.BOX_PRESETS[args.box]
 
-    snaps = render_evolution.find_snapshots(args.run_dir, args.start, args.end)[:: args.step]
+    snaps = render_evolution.find_snapshots(args.run_dir, args.start, args.end)[
+        :: args.step
+    ]
     if not snaps:
         print(f"No snapshots found in {args.run_dir}", file=sys.stderr)
         return 1
@@ -215,28 +275,57 @@ def main(argv=None):
 
     os.makedirs(args.outdir, exist_ok=True)
     jid = os.environ.get("SLURM_JOB_ID", "local")
-    frames_root = args.frames_root or os.path.abspath(f"/tmp/{args.tag}_{args.camera}_{jid}")
+    frames_root = args.frames_root or os.path.abspath(
+        f"/tmp/{args.tag}_{args.camera}_{jid}"
+    )
 
-    views = [_make_view("", box, args.res, cam_zoom, scalebar_frac, scalebar_label,
-                        selection_fn, frames_root)]
+    views = [
+        _make_view(
+            "",
+            box,
+            args.res,
+            cam_zoom,
+            scalebar_frac,
+            scalebar_label,
+            selection_fn,
+            frames_root,
+        )
+    ]
     for v in views:
-        print(f"[rosseland] view: box={[round(b, 2) for b in v['box']]} res={v['res']} "
-              f"camera_zoom={v['zoom']:.4f} pencil={movie_zoom.is_pencil(v['box'])} "
-              f"bar={v['scalebar_label']}", flush=True)
+        print(
+            f"[rosseland] view: box={[round(b, 2) for b in v['box']]} res={v['res']} "
+            f"camera_zoom={v['zoom']:.4f} pencil={movie_zoom.is_pencil(v['box'])} "
+            f"bar={v['scalebar_label']}",
+            flush=True,
+        )
 
-    _CFG.update(dict(
-        coords=coords, box=box, res=args.res, resolution=args.resolution,
-        workers=args.workers, azimuth=azimuth, elevation=elevation, zoom=args.zoom,
-        flip_x=args.flip_x, vmin=args.vmin, vmax=args.vmax,
-        scalebar_frac=scalebar_frac, scalebar_label=scalebar_label,
-        annotate_time=(not args.no_annotate), days_per_tfb=days_per_tfb,
-        views=views,
-    ))
+    _CFG.update(
+        dict(
+            coords=coords,
+            box=box,
+            res=args.res,
+            resolution=args.resolution,
+            workers=args.workers,
+            azimuth=azimuth,
+            elevation=elevation,
+            zoom=args.zoom,
+            flip_x=args.flip_x,
+            vmin=args.vmin,
+            vmax=args.vmax,
+            scalebar_frac=scalebar_frac,
+            scalebar_label=scalebar_label,
+            annotate_time=(not args.no_annotate),
+            days_per_tfb=days_per_tfb,
+            views=views,
+        )
+    )
 
     n = len(snaps)
-    print(f"[rosseland] {n} snapshots, camera={args.camera} (az={azimuth} el={elevation}), "
-          f"box={args.box}, res={args.res}, n_jobs={args.n_jobs} workers={args.workers}",
-          flush=True)
+    print(
+        f"[rosseland] {n} snapshots, camera={args.camera} (az={azimuth} el={elevation}), "
+        f"box={args.box}, res={args.res}, n_jobs={args.n_jobs} workers={args.workers}",
+        flush=True,
+    )
 
     tasks = [(idx, snaps[idx]) for idx in range(n)]
     n_jobs = min(args.n_jobs, max(1, len(tasks)))
@@ -261,10 +350,14 @@ def main(argv=None):
                     it.next(timeout=timeout)
                 except mp.TimeoutError:
                     pool.terminate()
-                    print(f"[rosseland] ABORT: no frame completed in {timeout:.0f}s after "
-                          f"{k}/{n} -- a worker was most likely OOM-killed. Frames on "
-                          f"disk are kept; re-submit to resume (lower NJOBS if it "
-                          f"recurs).", file=sys.stderr, flush=True)
+                    print(
+                        f"[rosseland] ABORT: no frame completed in {timeout:.0f}s after "
+                        f"{k}/{n} -- a worker was most likely OOM-killed. Frames on "
+                        f"disk are kept; re-submit to resume (lower NJOBS if it "
+                        f"recurs).",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                     return 1
                 print(f"[rosseland] frame {k + 1}/{n}", flush=True)
     else:
@@ -274,8 +367,9 @@ def main(argv=None):
 
     for view in views:
         suffix = f"_{view['name']}" if view["name"] else ""
-        out = os.path.join(args.outdir,
-                           f"{args.tag}_{args.camera}_{args.box}{suffix}.mp4")
+        out = os.path.join(
+            args.outdir, f"{args.tag}_{args.camera}_{args.box}{suffix}.mp4"
+        )
         _encode_movie(view["frames_dir"], n, out, args.fps)
         print(f"[rosseland] done -> {out}", flush=True)
     if not args.keep_frames:

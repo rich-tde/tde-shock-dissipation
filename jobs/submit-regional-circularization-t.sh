@@ -1,18 +1,20 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #SBATCH --partition=gpu_strw
 #SBATCH --account=gpu_strw
 #SBATCH --job-name=regional-circularization-t
 #SBATCH --array=1-3
 
 #SBATCH --time=12:00:00
-#SBATCH --output=/home/hey4/rich_tde/jobs/logs/%A_%a_%x.out
+#SBATCH --output=/home/hey4/rich_tde/jobs/logs/%j_%x.out
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=30G
-#SBATCH --mail-user="yujiehe@strw.leidenuniv.nl"
-#SBATCH --mail-type="ALL"
+#SBATCH --mail-user=yujiehe@strw.leidenuniv.nl
+#SBATCH --mail-type=ALL
+
+set -euo pipefail
 
 /home/hey4/.conda/envs/richanalysis/bin/python \
     /home/hey4/rich_tde/works/shock-tde/regional-circularization-t.py \
-    --mode "$SLURM_ARRAY_TASK_ID"
+    --mode "${SLURM_ARRAY_TASK_ID}"

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Validate annular-maximum-centred nozzle wedges on cached column maps.
 
 The direction is found from the maximum integrated-dissipation column in either
@@ -18,17 +17,16 @@ from pathlib import Path
 os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-nozzle-wedge")
 
-import dev
+import dev  # isort: skip  # Configure plotting style before importing pyplot.
 import matplotlib.pyplot as plt
 import numpy as np
-import richio
 import typer
 import unyt as u
-from loguru import logger
-
 from dev.datapaths import TDE_PARAMETERS
+from loguru import logger
 from richio.plots import scalar_map
 
+import richio
 
 INPUT_ROOT = Path(
     "/home/hey4/rich_tde/data/processed/CoolingChecks/"
@@ -116,9 +114,7 @@ def build_direction_cache(column_cache: Path, destination: Path, run: str) -> No
                 f"No native cells in {radius_min_rp}<r/r_p<{RADIUS_MAX_RP} "
                 f"for {snapshot_path}"
             )
-        local_index = int(
-            np.nanargmax(np.asarray(snapshot.dissipation[shell_indices]))
-        )
+        local_index = int(np.nanargmax(np.asarray(snapshot.dissipation[shell_indices])))
         peak_index = int(shell_indices[local_index])
         label = str(radius_min_rp).replace(".", "p")
         arrays[f"direction_peak_x_rp_dirmin_{label}"] = np.asarray(
@@ -147,9 +143,7 @@ def load_direction(path: Path, radius_min_rp: float) -> dict[str, float]:
         x = float(data[f"direction_peak_x_rp_dirmin_{label}"])
         y = float(data[f"direction_peak_y_rp_dirmin_{label}"])
         z = float(data[f"direction_peak_z_rp_dirmin_{label}"])
-        dissipation = float(
-            data[f"direction_peak_dissipation_cgs_dirmin_{label}"]
-        )
+        dissipation = float(data[f"direction_peak_dissipation_cgs_dirmin_{label}"])
     return {"x": x, "y": y, "z": z, "dissipation_cgs": dissipation}
 
 
@@ -190,9 +184,7 @@ def wedge_metrics(
     direction = math.atan2(direction_peak["y"], direction_peak["x"])
     angular_distance = wrapped_angular_distance(azimuth, direction)
     final_annulus = (
-        positive
-        & (radius >= WEDGE_RADIUS_MIN_RP)
-        & (radius <= RADIUS_MAX_RP)
+        positive & (radius >= WEDGE_RADIUS_MIN_RP) & (radius <= RADIUS_MAX_RP)
     )
     wedge = final_annulus & (
         np.abs(angular_distance) <= math.radians(ANGULAR_HALF_WIDTH_DEG)
@@ -281,10 +273,14 @@ def render(row: dict, arrays: dict, destination: Path) -> None:
     wedge = arrays["wedge"]
     log_dissipation = positive_log10(dissipation)
     log_surface_density = positive_log10(surface_density)
-    diss_limits = np.nanpercentile(log_dissipation[np.isfinite(log_dissipation) & eligible], (1, 100))
-    sigma_limits = np.nanpercentile(log_surface_density[np.isfinite(log_surface_density) & eligible], (1, 100))
+    diss_limits = np.nanpercentile(
+        log_dissipation[np.isfinite(log_dissipation) & eligible], (1, 100)
+    )
+    sigma_limits = np.nanpercentile(
+        log_surface_density[np.isfinite(log_surface_density) & eligible], (1, 100)
+    )
 
-    fig, axes = plt.subplots(1, 3, figsize=(17, 6), sharex=True, sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4.5), sharex=True, sharey=True)
     scalar_map(
         log_surface_density,
         x_rp,
@@ -386,12 +382,6 @@ def render(row: dict, arrays: dict, destination: Path) -> None:
         ax.set_ylim(-3, 3)
         ax.set_xlabel(r"$x/r_p$")
         ax.set_ylabel(r"$y/r_p$")
-    fig.suptitle(
-        rf"{row['run']}, snapshot {row['snapnum']}, "
-        rf"$t/t_{{\rm fb}}={row['time_tfb']:.3f}$, ${row['resolution']}^3$; "
-        rf"direction search: ${row['direction_radius_min_rp']:.1f}<R/r_p<1.75$; "
-        rf"wedge: $0.6<R/r_p<1.75$, $|\Delta\phi|<4.5^\circ$"
-    )
     fig.tight_layout()
     destination.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(destination, dpi=180)
@@ -463,8 +453,12 @@ def convergence_rows(rows: list[dict]) -> list[dict]:
 
 def main(
     mode: int = typer.Option(..., min=1, max=3, help="1: 1e4, 2: 1e5, 3: 1e6"),
-    input_root: Path = typer.Option(INPUT_ROOT, help="Stage-1 column-cache root"),
-    output_root: Path = typer.Option(OUTPUT_ROOT, help="Wedge-validation output root"),
+    input_root: Path = typer.Option(  # noqa: B008 - Typer declares options in defaults.
+        INPUT_ROOT, help="Stage-1 column-cache root"
+    ),
+    output_root: Path = typer.Option(  # noqa: B008 - Typer declares options in defaults.
+        OUTPUT_ROOT, help="Wedge-validation output root"
+    ),
     overwrite: bool = typer.Option(False, help="Redraw existing figures"),
     snapshot_index: int | None = typer.Option(
         None, min=0, help="Only process this zero-based representative-snapshot index"
@@ -494,14 +488,10 @@ def main(
         direction_path = run_root / "directions" / f"direction_snap_{snapnum:04d}.npz"
         if not direction_cache_complete(direction_path):
             logger.info("Finding native shell maxima for {} snapshot {}", run, snapnum)
-            build_direction_cache(
-                paths[(snapnum, RESOLUTIONS[0])], direction_path, run
-            )
+            build_direction_cache(paths[(snapnum, RESOLUTIONS[0])], direction_path, run)
         for resolution in RESOLUTIONS:
             for direction_radius_min_rp in DIRECTION_RADIUS_MINIMA_RP:
-                direction_peak = load_direction(
-                    direction_path, direction_radius_min_rp
-                )
+                direction_peak = load_direction(direction_path, direction_radius_min_rp)
                 row, arrays = wedge_metrics(
                     paths[(snapnum, resolution)],
                     direction_radius_min_rp,
@@ -509,8 +499,12 @@ def main(
                 )
                 rows.append(row)
                 radius_label = str(direction_radius_min_rp).replace(".", "p")
-                figure_path = run_root / "figures" / (
-                    f"wedge_snap_{snapnum:04d}_{resolution}_dirmin_{radius_label}.png"
+                figure_path = (
+                    run_root
+                    / "figures"
+                    / (
+                        f"wedge_snap_{snapnum:04d}_{resolution}_dirmin_{radius_label}.png"
+                    )
                 )
                 if (
                     overwrite

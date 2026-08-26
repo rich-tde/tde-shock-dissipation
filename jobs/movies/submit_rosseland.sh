@@ -1,21 +1,21 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ============================================================================
 # Submit Rosseland optical-depth movies (tau = int alpha_ross dr): face-on and
 # roughly side-on cameras, box presets A, B and C (mirrors submit_movies.sh's
 # g3()/faceon() pattern).
 #
-#   bash jobs/submit_rosseland.sh faceon   # face-on xy projection      (3 jobs: A,B,C)
-#   bash jobs/submit_rosseland.sh side     # roughly side-on (az0 el15) (2 jobs: A,B)
-#   bash jobs/submit_rosseland.sh both     # faceon + side              (5 jobs)
+#   bash jobs/movies/submit_rosseland.sh faceon  # face-on projection (boxes A, B, C)
+#   bash jobs/movies/submit_rosseland.sh side    # side-on view (boxes A and B)
+#   bash jobs/movies/submit_rosseland.sh both    # face-on + side-on
 #
-# Each job runs jobs/render_rosseland.slurm -> works/movies/render_rosseland_movie.py.
+# Each job runs jobs/movies/render_rosseland.slurm -> works/movies/render_rosseland_movie.py.
 # Output: reports/movies/rosseland/rosseland_<faceon|side>_<A|B|C>.mp4
 #
 # Tunables (env): RES RESOLUTION NJOBS WORKERS MEM TIME CPUS PARTITION ACCOUNT
 # ============================================================================
 set -euo pipefail
-cd /zfsstore/user/hey4/rich_tde
-RENDER=jobs/render_rosseland.slurm
+cd /home/hey4/rich_tde
+RENDER=jobs/movies/render_rosseland.slurm
 PY=/home/hey4/.conda/envs/richanalysis/bin/python
 
 # RESOLUTION IS NON-COMPROMISE: keep interpolation RES=1024 (output
@@ -62,7 +62,7 @@ MEM="${MEM:-370G}"; TIME="${TIME:-7-00:00:00}"; CPUS="${CPUS:-128}"
 FACEON_BOXES="${FACEON_BOXES:-A B C}"
 SIDE_BOXES="${SIDE_BOXES:-A B}"
 PART=(--partition="${PARTITION:-cpu-zen4}" --account="${ACCOUNT:-strw}")
-LOG=(--output=jobs/logs/%x_%j.out --error=jobs/logs/%x_%j.err)
+LOG=(--output=/home/hey4/rich_tde/jobs/logs/%j_%x.out)
 OUTDIR="reports/movies/rosseland"
 
 # Fixed colorbar bounds on tau = int alpha_ross dr: log10 tau from -1 to 2, i.e.

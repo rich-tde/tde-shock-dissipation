@@ -57,8 +57,7 @@ class RunConfig:
     @property
     def r_amin(self):
         return (
-            self.r_star * (self.m_bh / self.m_star) ** (2.0 / 3.0)
-            * richio.units.lscale
+            self.r_star * (self.m_bh / self.m_star) ** (2.0 / 3.0) * richio.units.lscale
         )
 
     @property
@@ -105,12 +104,21 @@ QUALITIES = {
 }
 FIELDS = {
     "density": FieldConfig(
-        "density", "g/cm**2", r"Column density $[\mathrm{g/cm^2}]$",
-        "twilight", COLOR_VMAX, 6, suppress_ambient=True,
+        "density",
+        "g/cm**2",
+        r"Column density $[\mathrm{g/cm^2}]$",
+        "twilight",
+        COLOR_VMAX,
+        6,
+        suppress_ambient=True,
     ),
     "dissipation": FieldConfig(
-        "dissipation", "erg/s/cm**2",
-        r"Column dissipation $[\mathrm{erg/s/cm^2}]$", "viridis", 1e18, 4,
+        "dissipation",
+        "erg/s/cm**2",
+        r"Column dissipation $[\mathrm{erg/s/cm^2}]$",
+        "viridis",
+        1e18,
+        4,
         floor_nonpositive=True,
     ),
 }
@@ -139,12 +147,13 @@ def fixed_box(config: RunConfig, window: str = "proposed") -> tuple:
     # richio expects (xmin, ymin, zmin, xmax, ymax, zmax).
     xmin, xmax, ymin, ymax, zmin, zmax = window_bounds(config, window)
     return tuple(
-        value * config.r_amin
-        for value in (xmin, ymin, zmin, xmax, ymax, zmax)
+        value * config.r_amin for value in (xmin, ymin, zmin, xmax, ymax, zmax)
     )
 
 
-def bh_axes_position(config: RunConfig, window: str = "proposed") -> tuple[float, float]:
+def bh_axes_position(
+    config: RunConfig, window: str = "proposed"
+) -> tuple[float, float]:
     xmin, xmax, ymin, ymax, _, _ = window_bounds(config, window)
     return -xmin / (xmax - xmin), -ymin / (ymax - ymin)
 
@@ -183,8 +192,9 @@ def time_annotation(time, config: RunConfig) -> str:
     )
 
 
-def projection_density(snapshot, time, config: RunConfig,
-                       ambient_factor: float = AMBIENT_FACTOR):
+def projection_density(
+    snapshot, time, config: RunConfig, ambient_factor: float = AMBIENT_FACTOR
+):
     """Suppress the ambient tracer before 0.3 fallback times without mutating data."""
     if not 0 < ambient_factor <= 1:
         raise ValueError("ambient_factor must be in (0, 1]")
@@ -209,9 +219,15 @@ def frame_durations(times, fps: int):
     return (intervals / intervals.sum() * target).in_units("s")
 
 
-def project_snapshot(path: Path, config: RunConfig, quality: Quality, window: str,
-                     workers: int, field: FieldConfig,
-                     ambient_factor: float = AMBIENT_FACTOR):
+def project_snapshot(
+    path: Path,
+    config: RunConfig,
+    quality: Quality,
+    window: str,
+    workers: int,
+    field: FieldConfig,
+    ambient_factor: float = AMBIENT_FACTOR,
+):
     snap = richio.load(str(path))
     time = _time_scalar(snap)
     x, y, z = snap.X, snap.Y, snap.Z
@@ -248,9 +264,16 @@ def project_snapshot(path: Path, config: RunConfig, quality: Quality, window: st
     return projected, time
 
 
-def render_projection(projected, time, config: RunConfig, quality: Quality,
-                      field: FieldConfig, output: Path, window: str,
-                      vmax: float) -> None:
+def render_projection(
+    projected,
+    time,
+    config: RunConfig,
+    quality: Quality,
+    field: FieldConfig,
+    output: Path,
+    window: str,
+    vmax: float,
+) -> None:
     vmin, vmax = color_limits(vmax, field.decades)
     if field.floor_nonpositive:
         projected = projected.copy()
@@ -259,14 +282,29 @@ def render_projection(projected, time, config: RunConfig, quality: Quality,
     annotation = time_annotation(time, config)
     output.parent.mkdir(parents=True, exist_ok=True)
     richrender.projection_image(
-        projected, output, field=field.name, unit=field.unit,
-        label=field.label, cmap=field.cmap,
-        norm="log", vmin=vmin, vmax=vmax, annotate=annotation,
-        azimuth=0.0, elevation=-90.0, axis_triad=True, flip_x=False,
-        scalebar_frac=0.25, scalebar_label=r"$0.5\,r_{\rm amin}$",
-        output_size=quality.canvas, dpi=quality.dpi,
-        annotation_color="black", scalebar_color="black",
-        points=[bh_axes_position(config, window)], point_color="black", point_size=12,
+        projected,
+        output,
+        field=field.name,
+        unit=field.unit,
+        label=field.label,
+        cmap=field.cmap,
+        norm="log",
+        vmin=vmin,
+        vmax=vmax,
+        annotate=annotation,
+        azimuth=0.0,
+        elevation=-90.0,
+        axis_triad=True,
+        flip_x=False,
+        scalebar_frac=0.25,
+        scalebar_label=r"$0.5\,r_{\rm amin}$",
+        output_size=quality.canvas,
+        dpi=quality.dpi,
+        annotation_color="black",
+        scalebar_color="black",
+        points=[bh_axes_position(config, window)],
+        point_color="black",
+        point_size=12,
     )
 
 
@@ -280,8 +318,13 @@ def _render_task(task) -> int:
     if frame_complete(destination) and not state["overwrite"]:
         return index
     projected, time = project_snapshot(
-        path, state["config"], state["quality"], state["window"], state["workers"],
-        state["field"], state["ambient_factor"],
+        path,
+        state["config"],
+        state["quality"],
+        state["window"],
+        state["workers"],
+        state["field"],
+        state["ambient_factor"],
     )
     render_projection(
         projected,
@@ -311,15 +354,27 @@ def _contact_sheet(paths: list[Path], titles: list[str], output: Path) -> None:
     plt.close(fig)
 
 
-def make_preview_examples(config: RunConfig, quality: Quality, field: FieldConfig,
-                          snapnums, paths, frames_dir: Path, output_dir: Path,
-                          workers: int, overwrite: bool, vmax: float,
-                          ambient_factor: float) -> None:
+def make_preview_examples(
+    config: RunConfig,
+    quality: Quality,
+    field: FieldConfig,
+    snapnums,
+    paths,
+    frames_dir: Path,
+    output_dir: Path,
+    workers: int,
+    overwrite: bool,
+    vmax: float,
+    ambient_factor: float,
+) -> None:
     indices = [0, len(paths) // 2, len(paths) - 1]
     _contact_sheet(
         [frames_dir / f"frame_{index:05d}.png" for index in indices],
-        [f"early: snap {snapnums[indices[0]]}", f"middle: snap {snapnums[indices[1]]}",
-         f"late: snap {snapnums[indices[2]]}"],
+        [
+            f"early: snap {snapnums[indices[0]]}",
+            f"middle: snap {snapnums[indices[1]]}",
+            f"late: snap {snapnums[indices[2]]}",
+        ],
         output_dir / "timeline.png",
     )
 
@@ -401,20 +456,37 @@ def main(argv=None) -> int:
         try:
             if jobs > 1 and tasks:
                 with mp.get_context("fork").Pool(jobs, maxtasksperchild=1) as pool:
-                    for done, index in enumerate(pool.imap_unordered(_render_task, tasks), 1):
-                        print(f"[{config.run}] frame {index} complete ({done}/{len(tasks)})", flush=True)
+                    for done, index in enumerate(
+                        pool.imap_unordered(_render_task, tasks), 1
+                    ):
+                        print(
+                            f"[{config.run}] frame {index} complete ({done}/{len(tasks)})",
+                            flush=True,
+                        )
             else:
                 for done, task in enumerate(tasks, 1):
                     index = _render_task(task)
-                    print(f"[{config.run}] frame {index} complete ({done}/{len(tasks)})", flush=True)
+                    print(
+                        f"[{config.run}] frame {index} complete ({done}/{len(tasks)})",
+                        flush=True,
+                    )
         finally:
             _WORKER_STATE.clear()
 
     complete_run = start == 0 and stop == len(paths)
     if quality.name == "preview" and complete_run and not args.no_examples:
         make_preview_examples(
-            config, quality, field, snapnums, paths, frames_dir, field_dir,
-            args.workers, args.overwrite, vmax, args.ambient_factor
+            config,
+            quality,
+            field,
+            snapnums,
+            paths,
+            frames_dir,
+            field_dir,
+            args.workers,
+            args.overwrite,
+            vmax,
+            args.ambient_factor,
         )
     if not args.no_encode and complete_run:
         movie = field_dir / f"faceon_{field.name}_{config.run}.mp4"

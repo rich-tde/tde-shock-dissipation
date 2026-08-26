@@ -21,6 +21,7 @@ Isotropic boxes (A, B) pass through both functions unchanged, so the same code
 path serves every preset.
 """
 
+
 def tidal_radius(m_bh=1e4, m_star=0.5, r_star=0.47):
     """Tidal radius ``r_t = R_* (M_BH / M_*)^(1/3)`` in code length (R_sun)."""
     return r_star * (m_bh / m_star) ** (1.0 / 3.0)
@@ -142,8 +143,13 @@ if __name__ == "__main__":  # quick geometry sanity check
         b = render_evolution.BOX_PRESETS[name]
         z = camera_zoom_for_box(b, 1.1)
         fov = max(box_extent(b)) / z
-        bar = scalebar_in_rp(b, z, r_p) if is_pencil(b) else \
-            render_evolution._scalebar_for_box(b, z, tidal_radius())
-        print(f"  {name}: extent={tuple(round(e, 1) for e in box_extent(b))} "
-              f"pencil={is_pencil(b)} zoom={z:.4f} "
-              f"fov={fov:.2f} R_sun (+-{fov / 2:.2f} = {fov / 2 / r_p:.3f} r_p) bar={bar}")
+        bar = (
+            scalebar_in_rp(b, z, r_p)
+            if is_pencil(b)
+            else render_evolution._scalebar_for_box(b, z, tidal_radius())
+        )
+        print(
+            f"  {name}: extent={tuple(round(e, 1) for e in box_extent(b))} "
+            f"pencil={is_pencil(b)} zoom={z:.4f} "
+            f"fov={fov:.2f} R_sun (+-{fov / 2:.2f} = {fov / 2 / r_p:.3f} r_p) bar={bar}"
+        )

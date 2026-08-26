@@ -9,7 +9,7 @@ from pathlib import Path
 os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-ediss-four-regions")
 
-import dev
+import dev  # noqa: F401 -- applies the repository plotting style
 import matplotlib.pyplot as plt
 import numpy as np
 import unyt as u
@@ -35,33 +35,40 @@ CONFIGS = {
 
 
 def physical_scales(label: str):
-    rstar_value, mstar_value, mbh_value, minimum_tfb = CONFIGS[label]
-    rstar = rstar_value * richio.units.lscale
-    mstar = mstar_value * richio.units.mscale
-    mbh = mbh_value * richio.units.mscale
-    r_p = rstar * (mbh / mstar) ** (1 / 3)
-    tmin = np.pi / np.sqrt(2) * (rstar**3 / u.G / mstar) ** 0.5 * (mbh / mstar) ** 0.5
-    delta = u.G * mbh / (4 * r_p) * mstar / 2
-    return tmin, delta, minimum_tfb
+    stellar_radius_value, stellar_mass_value, black_hole_mass_value, minimum_tfb = (
+        CONFIGS[label]
+    )
+    stellar_radius = stellar_radius_value * richio.units.lscale
+    stellar_mass = stellar_mass_value * richio.units.mscale
+    black_hole_mass = black_hole_mass_value * richio.units.mscale
+    pericenter_radius = stellar_radius * (black_hole_mass / stellar_mass) ** (1 / 3)
+    fallback_time = (
+        np.pi
+        / np.sqrt(2)
+        * (stellar_radius**3 / u.G / stellar_mass) ** 0.5
+        * (black_hole_mass / stellar_mass) ** 0.5
+    )
+    circularization_energy = (
+        u.G * black_hole_mass / (4 * pericenter_radius) * stellar_mass / 2
+    )
+    return fallback_time, circularization_energy, minimum_tfb
 
 
 def load_mode(label: str):
     path = DATA_DIR / f"Ediss-t-four-regions-{label}-n10.txt"
     raw = np.loadtxt(path, delimiter="\t").T
     raw = raw[:, np.argsort(raw[1], kind="stable")]
-    tmin, delta, minimum_tfb = physical_scales(label)
+    fallback_time, circularization_energy, minimum_tfb = physical_scales(label)
     raw = raw[:, raw[2] >= minimum_tfb]
     times = u.unyt_array(raw[1], TIME_UNIT, registry=richio.units.registry)
     power = u.unyt_array(raw[3:7], POWER_UNIT, registry=richio.units.registry)
-    return raw[2], times, power, tmin, delta
+    return raw[2], times, power, fallback_time, circularization_energy
 
 
 def decorate(axes, ylabel: str):
     for axis, label in zip(axes, CONFIGS):
         axis.set_xlabel(r"$t/t_{\rm fb}$", fontsize=14)
-        axis.set_title(
-            rf"$M_\bullet=10^{{{label[-1]}}}\,M_\odot$", fontsize=15
-        )
+        axis.set_title(rf"$M_\bullet=10^{{{label[-1]}}}\,M_\odot$", fontsize=15)
         axis.tick_params(labelsize=11)
         axis.grid(alpha=0.18)
     axes[0].set_ylabel(ylabel, fontsize=14)
@@ -75,8 +82,8 @@ def decorate(axes, ylabel: str):
 def plot_rate():
     fig, axes = plt.subplots(1, 3, figsize=(12.4, 3.8), sharey=True)
     for axis, label in zip(axes, CONFIGS):
-        tfb, _, power, tmin, delta = load_mode(label)
-        normalized = power / delta * tmin
+        tfb, _, power, fallback_time, circularization_energy = load_mode(label)
+        normalized = power / circularization_energy * fallback_time
         for row, (_, color, style) in zip(normalized, REGIONS):
             axis.plot(tfb, row, color=color, linestyle=style, linewidth=1.35)
         axis.set_yscale("log")
@@ -90,19 +97,33 @@ def plot_rate():
 def plot_cumulative():
     fig, axes = plt.subplots(1, 3, figsize=(12.4, 3.8), sharey=True)
     for axis, label in zip(axes, CONFIGS):
-        tfb, times, power, _, delta = load_mode(label)
+        tfb, times, power, _, circularization_energy = load_mode(label)
         dt = times[1:] - times[:-1]
         increments = 0.5 * (power[:, 1:] + power[:, :-1]) * dt
         cumulative = np.concatenate(
-            [np.zeros((4, 1)), np.cumsum((increments / delta).to_value("dimensionless"), axis=1)],
+            [
+                np.zeros((4, 1)),
+                np.cumsum(
+                    (increments / circularization_energy).to_value("dimensionless"),
+                    axis=1,
+                ),
+            ],
             axis=1,
         )
         for row, (_, color, style) in zip(cumulative, REGIONS):
-            axis.plot(tfb, np.where(row > 0, row, np.nan), color=color, linestyle=style, linewidth=1.35)
+            axis.plot(
+                tfb,
+                np.where(row > 0, row, np.nan),
+                color=color,
+                linestyle=style,
+                linewidth=1.35,
+            )
         axis.set_yscale("log")
     decorate(axes, r"$E_{\rm diss}(<t)/\Delta E_c$")
     fig.tight_layout(w_pad=2.2)
-    fig.savefig(FIGURE_DIR / "Ediss-cumulative-over-Delta-vs-t-four-regions.png", dpi=240)
+    fig.savefig(
+        FIGURE_DIR / "Ediss-cumulative-over-Delta-vs-t-four-regions.png", dpi=240
+    )
     fig.savefig(FIGURE_DIR / "Ediss-cumulative-over-Delta-vs-t-four-regions.pdf")
     plt.close(fig)
 

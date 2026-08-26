@@ -68,9 +68,27 @@ RUNS = {
 }
 
 FIELDS = (
-    ("density", "density", "Density", r"$\log_{10}(\rho/[\mathrm{g\,cm^{-3}}])$", "twilight"),
-    ("pressure", "pressure", "Gas pressure", r"$\log_{10}(P/[\mathrm{dyn\,cm^{-2}}])$", "rainbow"),
-    ("temperature", "temperature", "Gas temperature", r"$\log_{10}(T_\mathrm{gas}/\mathrm{K})$", "inferno"),
+    (
+        "density",
+        "density",
+        "Density",
+        r"$\log_{10}(\rho/[\mathrm{g\,cm^{-3}}])$",
+        "twilight",
+    ),
+    (
+        "pressure",
+        "pressure",
+        "Gas pressure",
+        r"$\log_{10}(P/[\mathrm{dyn\,cm^{-2}}])$",
+        "rainbow",
+    ),
+    (
+        "temperature",
+        "temperature",
+        "Gas temperature",
+        r"$\log_{10}(T_\mathrm{gas}/\mathrm{K})$",
+        "inferno",
+    ),
     (
         "dissipation",
         "dissipation",
@@ -271,8 +289,12 @@ def main(
     dpi: int = typer.Option(240, min=50, help="Output PNG resolution"),
     output_root: Path = typer.Option(OUTPUT_ROOT, help="Study output directory"),
     overwrite: bool = typer.Option(False, help="Recompute cached grids and figures"),
-    rerender: bool = typer.Option(False, help="Redraw figures from existing cached grids"),
-    list_only: bool = typer.Option(False, help="Print selected snapshots without loading them"),
+    rerender: bool = typer.Option(
+        False, help="Redraw figures from existing cached grids"
+    ),
+    list_only: bool = typer.Option(
+        False, help="Print selected snapshots without loading them"
+    ),
 ) -> None:
     config = mode_settings(mode)
     selected = selected_snapshots(config.run)

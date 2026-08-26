@@ -1,15 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ============================================================================
 # Single entry point to (re)produce the conference TDE movie sets.
 #
-#   bash jobs/submit_movies.sh scan      # colour-range scan (all cameras) -> color_ranges.json
-#   bash jobs/submit_movies.sh g2        # canonical 3/4 view      (boxes A,B; 2 jobs x4 fields)
-#   bash jobs/submit_movies.sh g3        # side + top angles       (boxes A,B; 4 jobs x4 fields)
-#   bash jobs/submit_movies.sh faceon    # face-on xy projection, no rotation, frames KEPT
-#                                        # boxes A, B (wide) and C (+-2.5 r_p close-up)
-#   bash jobs/submit_movies.sh all       # g2 + g3 + faceon
+#   bash jobs/movies/submit_movies.sh scan    # colour-range scan -> color_ranges.json
+#   bash jobs/movies/submit_movies.sh g2      # canonical 3/4 view (boxes A and B)
+#   bash jobs/movies/submit_movies.sh g3      # side and top angles (boxes A and B)
+#   bash jobs/movies/submit_movies.sh faceon  # face-on projection (boxes A, B, and C)
+#   bash jobs/movies/submit_movies.sh all     # g2 + g3 + faceon
 #
-# Each render job uses the shared-index multi-field driver (jobs/render_multi.slurm
+# Each render job uses the shared-index multi-field driver (jobs/movies/render_multi.slurm
 # -> works/movies/render_evolution_multi.py): ONE KDTree build per snapshot renders all 4
 # fields (density, dissipation, temperature, bernoulli).  Colour limits are read from
 # reports/movies/color_ranges.json (produced by the `scan` case); if a label is
@@ -22,13 +21,13 @@
 # cpu-short (big RAM, fits res 512 in <4 h).  Tunables (env):
 #   RES RESOLUTION NJOBS WORKERS MEM TIME CPUS PARTITION ACCOUNT SPIN
 # For a res-1024 set the whole-movie wall time can exceed cpu-short's 4 h cap; render
-# in frame windows instead (render_multi.slurm supports MODE=render/encode +
+# in frame windows instead (jobs/movies/render_multi.slurm supports MODE=render/encode +
 # FRAME_START/FRAME_STOP/FRAMES_ROOT -- see jobs/archive/submit_cpushort.sh).
 # ============================================================================
 set -euo pipefail
-cd /zfsstore/user/hey4/rich_tde
-RENDER=jobs/render_multi.slurm
-SCAN=jobs/scan_color.slurm
+cd /home/hey4/rich_tde
+RENDER=jobs/movies/render_multi.slurm
+SCAN=jobs/movies/scan_color.slurm
 PY=/home/hey4/.conda/envs/richanalysis/bin/python
 CR_JSON="${CR_JSON:-reports/movies/color_ranges.json}"
 FIELDS_SEMI="${FIELDS:-density;dissipation;temperature;bernoulli}"  # ';' (sbatch --export splits on ',')
@@ -43,7 +42,7 @@ PART=(--partition="${PARTITION:-cpu-short}" --account="${ACCOUNT:-strw}")
 # line-of-sight depth, so it is a true magnification of the wide frames -- same
 # column values, so it reuses box A's colour ranges and needs no new scan.
 FACEON_BOXES="${FACEON_BOXES:-A B C}"
-LOG=(--output=jobs/logs/%x_%j.out --error=jobs/logs/%x_%j.err)
+LOG=(--output=/home/hey4/rich_tde/jobs/logs/%j_%x.out)
 
 # "VMINS=..;..,VMAXS=..;.." (semicolon lists, aligned with FIELDS_SEMI's order --
 # may be a subset of the full field list, e.g. FIELDS=dissipation for a

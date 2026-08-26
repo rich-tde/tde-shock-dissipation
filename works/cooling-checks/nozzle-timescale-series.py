@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Stage-3 restartable nozzle-cooling timeseries worker and aggregator."""
 
 from __future__ import annotations
@@ -12,15 +11,13 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-nozzle-series")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import matplotlib.pyplot as plt
+import nozzle_timescales as VALIDATION
 import numpy as np
-import richio
 import typer
+from dev.datapaths import DATAPATHS
 from loguru import logger
 
-from dev.datapaths import DATAPATHS
-
-import nozzle_timescales as VALIDATION
-
+import richio
 
 OUTPUT_ROOT = Path(
     "/home/hey4/rich_tde/data/processed/CoolingChecks/"
@@ -240,7 +237,7 @@ def series(items: list[dict], field: str):
 
 
 def render_timescales(rows: list[dict], output_root: Path, statistic: str) -> None:
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8), sharex="col")
+    fig, axes = plt.subplots(2, 3, figsize=(11.5, 6.5), sharex="col")
     for column, run in enumerate(RUN_BY_MODE.values()):
         items = rows_for(rows, run, statistic)
         time = series(items, "time_tfb")
@@ -269,7 +266,6 @@ def render_timescales(rows: list[dict], output_root: Path, statistic: str) -> No
         ax.set_xlabel(r"$t/t_{\rm fb}$")
         ax.set_ylabel("timescale ratio")
         ax.legend(fontsize=7, ncol=2)
-    fig.suptitle(statistic.replace("_", " "))
     fig.tight_layout()
     destination = output_root / "figures" / f"timescales_{statistic}.png"
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -284,7 +280,7 @@ def render_components(rows: list[dict], output_root: Path, statistic: str) -> No
         ("vzbar_cm_s", r"$\langle |v_z|\rangle_\rho$ [cm s$^{-1}$]", True),
         ("sigma_g_cm2", r"$\Sigma$ [g cm$^{-2}$]", True),
     )
-    fig, axes = plt.subplots(4, 3, figsize=(15, 12), sharex="col")
+    fig, axes = plt.subplots(4, 3, figsize=(11.5, 9), sharex="col")
     for column, run in enumerate(RUN_BY_MODE.values()):
         items = rows_for(rows, run, statistic)
         time = series(items, "time_tfb")
@@ -298,7 +294,6 @@ def render_components(rows: list[dict], output_root: Path, statistic: str) -> No
                 ax.set_title(run)
             if row_index == len(fields) - 1:
                 ax.set_xlabel(r"$t/t_{\rm fb}$")
-    fig.suptitle(statistic.replace("_", " "))
     fig.tight_layout()
     destination = output_root / "figures" / f"components_{statistic}.png"
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -307,7 +302,7 @@ def render_components(rows: list[dict], output_root: Path, statistic: str) -> No
 
 
 def render_selection(rows: list[dict], output_root: Path) -> None:
-    fig, axes = plt.subplots(3, 3, figsize=(15, 10), sharex="col")
+    fig, axes = plt.subplots(3, 3, figsize=(11.5, 7.5), sharex="col")
     for column, run in enumerate(RUN_BY_MODE.values()):
         items = rows_for(rows, run, "max_dissipation_pixel")
         time = series(items, "time_tfb")
@@ -325,7 +320,6 @@ def render_selection(rows: list[dict], output_root: Path) -> None:
         axes[2, column].axhline(1.75, color="k", ls=":", lw=0.8)
         axes[2, column].set_ylabel(r"$R_{\rm peak}/r_p$")
         axes[2, column].set_xlabel(r"$t/t_{\rm fb}$")
-    fig.suptitle("Wedge-selection quality")
     fig.tight_layout()
     destination = output_root / "figures" / "selection_quality.png"
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -352,7 +346,9 @@ def main(
     resolution: int = typer.Option(256, min=8, help="x/y resolution"),
     resolution_z: int = typer.Option(512, min=8),
     workers: int = typer.Option(8, min=1),
-    output_root: Path = typer.Option(OUTPUT_ROOT),
+    output_root: Path = typer.Option(  # noqa: B008 - Typer declares options in defaults.
+        OUTPUT_ROOT
+    ),
     overwrite: bool = typer.Option(False),
 ) -> None:
     if percentile is not None:

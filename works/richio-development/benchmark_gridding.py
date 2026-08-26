@@ -12,45 +12,54 @@ import argparse
 import json
 import multiprocessing as mp
 import resource
+from pathlib import Path
 from time import perf_counter
 
 import numpy as np
-from scipy.spatial import KDTree
 import unyt as u
+from richio.data import _iter_3d_nearest_slabs
+from scipy.spatial import KDTree
 
 import richio
-from richio.data import _iter_3d_nearest_slabs
 
 
-def _run_one(path, field, res, workers, z_spacing, sinh_scale, queue):
+def _run_one(
+    snapshot_path,
+    field,
+    resolution,
+    workers,
+    z_spacing,
+    sinh_scale,
+    result_queue,
+):
     started = perf_counter()
-    snap = richio.load(path)
+    snapshot = richio.load(str(snapshot_path))
 
-    tick = perf_counter()
-    x, y, z = snap.X, snap.Y, snap.Z
-    data = snap._get_data(field)
-    field_seconds = perf_counter() - tick
+    stage_started = perf_counter()
+    x, y, z = snapshot.X, snapshot.Y, snapshot.Z
+    field_values = snapshot._get_data(field)
+    field_seconds = perf_counter() - stage_started
 
-    tick = perf_counter()
-    coords, source_indices, xspace, yspace, zspace = snap._prepare_3d_grid(
-        res=res,
+    stage_started = perf_counter()
+    coordinates, source_indices, xspace, yspace, zspace = snapshot._prepare_3d_grid(
+        res=resolution,
         X=x,
         Y=y,
         Z=z,
         spacing=("linear", "linear", z_spacing),
         sinh_scale=sinh_scale,
     )
-    preparation_seconds = perf_counter() - tick
+    preparation_seconds = perf_counter() - stage_started
 
-    tick = perf_counter()
-    tree = KDTree(coords)
-    tree_seconds = perf_counter() - tick
+    stage_started = perf_counter()
+    tree = KDTree(coordinates)
+    tree_seconds = perf_counter() - stage_started
 
-    tick = perf_counter()
+    stage_started = perf_counter()
     dz = np.asarray(zspace[1:] - zspace[:-1])
-    values = np.asarray(data)
-    projected = np.empty((res - 1, res - 1), dtype="float64")
-    for a, local_indices in _iter_3d_nearest_slabs(
+    values = np.asarray(field_values)
+    projected = np.empty((resolution - 1, resolution - 1), dtype="float64")
+    for slab_start, local_indices in _iter_3d_nearest_slabs(
         tree, xspace[:-1], yspace[:-1], zspace[:-1], workers=workers
     ):
         indices = (
@@ -58,17 +67,19 @@ def _run_one(path, field, res, workers, z_spacing, sinh_scale, queue):
             if source_indices is not None
             else local_indices
         )
-        projected[a : a + len(indices)] = np.sum(values[indices] * dz, axis=-1)
-    query_integration_seconds = perf_counter() - tick
+        projected[slab_start : slab_start + len(indices)] = np.sum(
+            values[indices] * dz, axis=-1
+        )
+    query_integration_seconds = perf_counter() - stage_started
 
-    result = u.unyt_array(projected, data.units * zspace.units).in_base("cgs")
-    queue.put(
+    result = u.unyt_array(projected, field_values.units * zspace.units).in_base("cgs")
+    result_queue.put(
         {
-            "resolution": res,
+            "resolution": resolution,
             "workers": workers,
             "z_spacing": z_spacing,
             "sinh_scale": sinh_scale,
-            "cells": len(coords),
+            "cells": len(coordinates),
             "field_loading_s": field_seconds,
             "grid_preparation_s": preparation_seconds,
             "tree_build_s": tree_seconds,
@@ -110,34 +121,35 @@ def main():
         type=float,
         help="central scale in RICH code lengths; required with --z-spacing=sinh",
     )
-    args = parser.parse_args()
-    if args.z_spacing == "sinh" and args.sinh_scale is None:
+    arguments = parser.parse_args()
+    if arguments.z_spacing == "sinh" and arguments.sinh_scale is None:
         parser.error("--sinh-scale is required with --z-spacing=sinh")
 
     context = mp.get_context("spawn")
-    for res in args.resolutions or [256]:
-        for workers in args.workers:
-            queue = context.Queue()
+    snapshot_path = Path(arguments.snapshot)
+    for resolution in arguments.resolutions or [256]:
+        for workers in arguments.workers:
+            result_queue = context.Queue()
             process = context.Process(
                 target=_run_one,
                 args=(
-                    args.snapshot,
-                    args.field,
-                    res,
+                    snapshot_path,
+                    arguments.field,
+                    resolution,
                     workers,
-                    args.z_spacing,
-                    args.sinh_scale,
-                    queue,
+                    arguments.z_spacing,
+                    arguments.sinh_scale,
+                    result_queue,
                 ),
             )
             process.start()
             process.join()
             if process.exitcode != 0:
                 raise SystemExit(
-                    f"benchmark failed for res={res}, workers={workers} "
+                    f"benchmark failed for res={resolution}, workers={workers} "
                     f"with exit code {process.exitcode}"
                 )
-            print(json.dumps(queue.get(), sort_keys=True), flush=True)
+            print(json.dumps(result_queue.get(), sort_keys=True), flush=True)
 
 
 if __name__ == "__main__":

@@ -21,7 +21,8 @@ import logging
 import math
 
 import matplotlib
-matplotlib.use('Agg')
+
+matplotlib.use("Agg")
 import dev  # noqa: F401  # Configure local imports and the plotting style.
 import matplotlib.pyplot as plt
 import imageio.v2 as imageio
@@ -40,34 +41,34 @@ LOG = logging.getLogger("make_gif")
 # - kwargs: additional kwargs forwarded to snap.project or snap.slice
 # Example: add/remove entries from this list to change outputs.
 beta = 1
-mstar = .5 * richio.units.mscale
-rstar = .47 * richio.units.lscale
+mstar = 0.5 * richio.units.mscale
+rstar = 0.47 * richio.units.lscale
 mbh = 10**4 * richio.units.mscale
-rt = rstar * (mbh/mstar)**(1/3)
+rt = rstar * (mbh / mstar) ** (1 / 3)
 
-ra = rt**2 / rstar #2 * Rt * (Mbh/mstar)**(1/3)
+ra = rt**2 / rstar  # 2 * Rt * (Mbh/mstar)**(1/3)
 
-nozzle_box = u.unyt_array([-3*rt, -3*rt, -2*rt, 3*rt, 3*rt, 2*rt])
-big_box = u.unyt_array([-6*ra, -4*ra, -2*ra, 2.5*ra, 3*ra, 2*ra])
-mid_box = u.unyt_array([-3*ra, -2*ra, -0.8*ra, 2*ra, 2*ra, 0.8*ra])
+nozzle_box = u.unyt_array([-3 * rt, -3 * rt, -2 * rt, 3 * rt, 3 * rt, 2 * rt])
+big_box = u.unyt_array([-6 * ra, -4 * ra, -2 * ra, 2.5 * ra, 3 * ra, 2 * ra])
+mid_box = u.unyt_array([-3 * ra, -2 * ra, -0.8 * ra, 2 * ra, 2 * ra, 0.8 * ra])
 
 PLOTS = [
     {
-        'name': 'dissipation_proj_yz',
-        'type': 'projection',
-        'data': 'dissipation',
-        'kwargs': {
-            'res': (512, 512, 512),
-            'x': 'CMy',
-            'y': 'CMz',
-            'z': 'CMx',
-            'box_size': big_box,
+        "name": "dissipation_proj_yz",
+        "type": "projection",
+        "data": "dissipation",
+        "kwargs": {
+            "res": (512, 512, 512),
+            "x": "CMy",
+            "y": "CMz",
+            "z": "CMx",
+            "box_size": big_box,
         },
-        'plot_kwargs': {
-            'cmap': 'cividis',
-            'label_latex': r'\text{Energy Dissipation}',
-            'unit_latex': r'\mathrm{(erg/s/cm^2)}',
-        }
+        "plot_kwargs": {
+            "cmap": "cividis",
+            "label_latex": r"\text{Energy Dissipation}",
+            "unit_latex": r"\mathrm{(erg/s/cm^2)}",
+        },
     },
 ]
 # ---------------------------------------------------------------------
@@ -95,16 +96,23 @@ def compute_vrange_from_snapshot(snap, plot_cfg):
     Returns tuple (vmin, vmax) or (None, None) on failure.
     """
     try:
-        if plot_cfg['type'] == 'projection':
-            projected, xspace, yspace = snap.project(data=plot_cfg['data'], **plot_cfg['kwargs'])
+        if plot_cfg["type"] == "projection":
+            projected, xspace, yspace = snap.project(
+                data=plot_cfg["data"], **plot_cfg["kwargs"]
+            )
             arr = np.asarray(np.log10(projected))
         else:
-            sliced, xspace, yspace = snap.slice(data=plot_cfg['data'], **plot_cfg['kwargs'])
+            sliced, xspace, yspace = snap.slice(
+                data=plot_cfg["data"], **plot_cfg["kwargs"]
+            )
             arr = np.asarray(np.log10(sliced))
 
         finite_mask = np.isfinite(arr)
         if not finite_mask.any():
-            LOG.warning("No finite values found when computing vmin/vmax for %s", plot_cfg['name'])
+            LOG.warning(
+                "No finite values found when computing vmin/vmax for %s",
+                plot_cfg["name"],
+            )
             return None, None
 
         dmin = float(np.min(arr[finite_mask]))
@@ -114,13 +122,13 @@ def compute_vrange_from_snapshot(snap, plot_cfg):
         vmax = math.ceil(dmax * 2.0) / 2.0
         return vmin, vmax
     except Exception:
-        LOG.exception("Failed to compute vmin/vmax for config %s", plot_cfg['name'])
+        LOG.exception("Failed to compute vmin/vmax for config %s", plot_cfg["name"])
         return None, None
 
 
 def title_from_snapshot(snap):
     # try a few common attributes for snapshot time
-    for attr in ('tfb', 'time', 't'):
+    for attr in ("tfb", "time", "t"):
         if hasattr(snap, attr):
             return f"t = {getattr(snap, attr):.4f}"
     # fallback to nothing
@@ -133,10 +141,14 @@ def make_plot_for_snapshot(snap, idx, plot_cfg, vrange, outpath: Path):
     vrange is (vmin, vmax) in log10 units (or None values to let scalar_map choose).
     """
     try:
-        if plot_cfg['type'] == 'projection':
-            data_arr, xspace, yspace = snap.project(data=plot_cfg['data'], **plot_cfg['kwargs'])
+        if plot_cfg["type"] == "projection":
+            data_arr, xspace, yspace = snap.project(
+                data=plot_cfg["data"], **plot_cfg["kwargs"]
+            )
         else:
-            data_arr, xspace, yspace = snap.slice(data=plot_cfg['data'], **plot_cfg['kwargs'])
+            data_arr, xspace, yspace = snap.slice(
+                data=plot_cfg["data"], **plot_cfg["kwargs"]
+            )
 
         # build and save the figure using richio plotting helper
         fig, ax = plt.subplots(figsize=(6, 5))
@@ -147,11 +159,11 @@ def make_plot_for_snapshot(snap, idx, plot_cfg, vrange, outpath: Path):
             xspace=xspace,
             yspace=yspace,
             ax=ax,
-            **plot_cfg.get('plot_kwargs', {}),
+            **plot_cfg.get("plot_kwargs", {}),
         )
 
         if vrange is not None and vrange[0] is not None and vrange[1] is not None:
-            plot_args.update({'vmin': vrange[0], 'vmax': vrange[1]})
+            plot_args.update({"vmin": vrange[0], "vmax": vrange[1]})
 
         # call scalar_map which handles the colorbar
         ax, im = richio.plots.scalar_map(**plot_args)
@@ -164,12 +176,14 @@ def make_plot_for_snapshot(snap, idx, plot_cfg, vrange, outpath: Path):
             ax.set_title(f"{plot_cfg['name']} — snap {idx}")
 
         outpath.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(outpath, dpi=150, bbox_inches='tight')
+        fig.savefig(outpath, dpi=150, bbox_inches="tight")
         plt.close(fig)
         LOG.info("Saved %s", outpath)
         return True
     except Exception:
-        LOG.exception("Failed to make plot for snap %s, config %s", idx, plot_cfg['name'])
+        LOG.exception(
+            "Failed to make plot for snap %s, config %s", idx, plot_cfg["name"]
+        )
         return False
 
 
@@ -182,14 +196,20 @@ def build_gif(image_paths, gif_path, duration=0.2):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Make GIFs from snapshots using richio")
-    parser.add_argument('base_dir', help='Base directory containing snap_N folders')
-    parser.add_argument('--start', type=int, default=1)
-    parser.add_argument('--end', type=int, default=150)
-    parser.add_argument('--out', default='out_plots')
-    parser.add_argument('--dry-run', action='store_true')
-    parser.add_argument('--resume', action='store_true', help='Skip creating outputs that already exist and continue')
-    parser.add_argument('--verbose', '-v', action='store_true')
+    parser = argparse.ArgumentParser(
+        description="Make GIFs from snapshots using richio"
+    )
+    parser.add_argument("base_dir", help="Base directory containing snap_N folders")
+    parser.add_argument("--start", type=int, default=1)
+    parser.add_argument("--end", type=int, default=150)
+    parser.add_argument("--out", default="out_plots")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip creating outputs that already exist and continue",
+    )
+    parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
@@ -199,7 +219,9 @@ def main(argv=None):
 
     snaps = find_available_snapshots(base, args.start, args.end)
     if not snaps:
-        LOG.error("No snapshots found in %s in range %d..%d", base, args.start, args.end)
+        LOG.error(
+            "No snapshots found in %s in range %d..%d", base, args.start, args.end
+        )
         return 1
 
     # pick latest available snapshot (highest index) to determine vrange per plot
@@ -210,7 +232,7 @@ def main(argv=None):
 
     vranges = {}
     for cfg in PLOTS:
-        vranges[cfg['name']] = compute_vrange_from_snapshot(latest_snap, cfg)
+        vranges[cfg["name"]] = compute_vrange_from_snapshot(latest_snap, cfg)
 
     if args.dry_run:
         LOG.info("Dry run: vranges = %s", vranges)
@@ -218,7 +240,7 @@ def main(argv=None):
 
     # For each plot config, produce images then a gif
     for cfg in PLOTS:
-        name = cfg['name']
+        name = cfg["name"]
         img_paths = []
         cfg_out = outdir / name
         for idx, path in snaps:
@@ -247,5 +269,5 @@ def main(argv=None):
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     raise SystemExit(main())
