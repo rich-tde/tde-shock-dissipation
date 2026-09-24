@@ -1,5 +1,129 @@
 #!/usr/bin/env python3
-"""Render direct histograms of all shock-finder surface cells."""
+"""Compare projected gas/dissipation structure with detected shock locations.
+
+Produce XY and YZ three-panel figures: gas column density, line-of-sight
+integrated volumetric dissipation, and a histogram of shock-surface cells.
+Projection bounds match the conference movie windows in ``r_amin`` units.
+Counts depend on resolution; they are not shock power or volume-weighted
+integrals. Counts include all line-of-sight surface cells within the plotted
+2-D bounds, while gas projections integrate a finite line-of-sight depth.
+
+Input files
+-----------
+Let ``ROOT=/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection``.
+
+``ROOT/RUN/shockfinder_snap_NNNN.npz``
+    Produced by ``shock-finder-ediss-selection.py``. Required keys are
+    scalar ``run``, ``snapnum``, ``time_tfb``, ``time_code``, ``is_last``,
+    ``snap_path``, and integer ``surf_idx``. ``snap_path`` locates the raw
+    HDF5 used for density/dissipation projections when building a cache.
+``ROOT/analysis/per-cell/RUN_shock_dissipation_snap_NNNN.npz``
+    Produced by ``0.5-shock-finder-ediss-analysis.ipynb``. Required aligned
+    1-D arrays are ``x_Rsun``, ``y_Rsun``, ``z_Rsun`` (positions in physical
+    unyt solar radii), ``mach_T`` (dimensionless), ``shock_power_erg_s``
+    (erg/s), plus scalar string ``snap_path``. Required at render time even
+    if the projection cache already exists. Positions are corrected to the
+    BH frame where needed before filtering/histogramming.
+
+Override roots with ``--result-root`` and ``--per-cell-root``. ``--result``
+selects an explicit detector result and also sets the detector root to its
+parent's parent; ``--task-index`` instead selects from the sorted catalogue.
+
+Output files
+------------
+Under ``ROOT/analysis/shock-locations/`` unless ``--output-root`` is supplied:
+
+``RUN/grids/shock_locations_snap_NNNN.npz``
+    Compressed NumPy archive; load with ``np.load``. ``NNNN`` is the
+    zero-padded snapshot number. The following scalar metadata keys have
+    shape ``()`` and use ``.item()``:
+
+    ``run``, ``projection_method`` : Unicode
+        Run label and literal ``richio.project``.
+    ``snapnum``, ``projection_nz`` : int64
+        Snapshot number and number of line-of-sight integration intervals
+        (128, from 129 sample planes).
+    ``time_tfb``, ``r_p_rsun`` : float64
+        Dimensionless snapshot time/fallback time and pericentre radius in
+        code-length units (``richio.units.lscale=7e10 cm``), respectively.
+        Despite its name, ``r_p_rsun`` is not an exact unyt ``Rsun`` conversion.
+    ``is_last`` : bool
+        Whether the detector input was selected as the final snapshot.
+
+    Each key below occurs twice, with ``PLANE=xy`` or ``PLANE=yz``. Let
+    ``(A, B)=(x, y)`` for XY and ``(A, B)=(y, z)`` for YZ. Arrays use
+    ``[i, j]=(A-bin i, B-bin j)``; transpose for ``pcolormesh``. ``Nx, Ny``
+    count projection pixels, ``Hx, Hy`` count histogram bins. Resolutions
+    depend on window aspect ratio; projection longest axis is 512 pixels
+    and shock histogram longest axis is 256 bins.
+
+    ``PLANE_x_edges``, ``PLANE_y_edges`` : float64, shapes ``(Nx+1,)``, ``(Ny+1,)``
+        Bin edges for projected fields in BH-frame ``A/r_p`` and ``B/r_p``.
+        The suffixes x/y mean horizontal/vertical axes, even for YZ.
+    ``PLANE_density_column`` : float64, shape ``(Nx, Ny)``
+        Linear column density [g/cm^2], integrated along the normal axis.
+    ``PLANE_dissipation_column`` : float64, shape ``(Nx, Ny)``
+        Linear projected dissipation [erg/s/cm^2]. Negative/nonfinite raw
+        dissipation is replaced by zero before integration.
+    ``PLANE_shock_x_edges``, ``PLANE_shock_y_edges`` : float64, shapes ``(Hx+1,)``, ``(Hy+1,)``
+        Histogram edges in the same dimensionless coordinate convention.
+    ``PLANE_shock_count`` : float64, shape ``(Hx, Hy)``
+        Unfiltered number of detector surface cells per bin, stored as
+        integer-valued floats. No Mach/power filter is applied to this key.
+    ``PLANE_surface_total``, ``PLANE_surface_in_view`` : int64, shape ``()``
+        Surface cells with finite projected coordinates, and their count
+        inside the 2-D histogram bounds, respectively.
+
+    All saved numerical grids are linear, not log10; there is no validity
+    mask. Nonfinite shock coordinates are excluded. Earlier caches without
+    ``projection_method``/histogram edges are rebuilt by the current CLI.
+
+``RUN/xy/shock_locations_snap_NNNN.png``, ``RUN/yz/shock_locations_snap_NNNN.png``
+    Raster figures; dimensions depend on view and ``--dpi``. Unlike the
+    cached count grid, the displayed histogram is recomputed from the
+    per-cell input with finite coordinates/Mach/power, ``mach_T >= 1.8``
+    and ``shock_power_erg_s >= 0`` by default. Change thresholds with
+    ``--shock-mach-min``/``--shock-power-min``. Filtered grids are not saved.
+    The per-cell renderer divides physical-Rsun coordinates by legacy
+    ``r_p_rsun`` code-length values; this introduces an approximately 0.6%
+    scale difference from the cached histogram. No correction is applied
+    here. Figures use logarithmic colour normalization, not logged data.
+
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` with the richanalysis Python environment::
+
+    python works/shock-tde/shock-location-slices.py --list-only
+    python works/shock-tde/shock-location-slices.py --task-index 0 --workers 8
+    python works/shock-tde/shock-location-slices.py --task-index 0 --shock-mach-min 2 --rerender
+
+Complete caches and figures are skipped; ``--overwrite`` rebuilds both and
+``--rerender`` reuses projections but reapplies display filters. Use
+``--rerender`` after changing filters/DPI and a distinct root to keep variants.
+
+Loading examples
+----------------
+Load a current-schema cache and plot its unfiltered XY surface-cell counts::
+
+    from pathlib import Path
+    import dev
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    root = Path("data/processed/ShockFinderEdissSelection/analysis/shock-locations")
+    with np.load(root / "1e4/grids/shock_locations_snap_0151.npz") as data:
+        x = data["xy_shock_x_edges"]
+        y = data["xy_shock_y_edges"]
+        count = data["xy_shock_count"]
+        in_view = data["xy_surface_in_view"].item()
+    assert count.shape == (len(x) - 1, len(y) - 1)
+    print(count.sum(), in_view)  # Matching unfiltered cell counts.
+    fig, ax = plt.subplots()
+    image = ax.pcolormesh(x, y, count.T, shading="flat")
+    ax.set(xlabel="x/r_p", ylabel="y/r_p", aspect="equal")
+    fig.colorbar(image, ax=ax, label="Surface cells per bin (unfiltered)")
+    plt.show()
+"""
 
 from __future__ import annotations
 
@@ -11,19 +135,24 @@ from dataclasses import dataclass
 from pathlib import Path
 
 os.environ.setdefault("MPLBACKEND", "Agg")
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-shock-location-slices")
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import dev
+
+# Apply the repository plotting style before importing pyplot.
+# isort: split
+
 import matplotlib.pyplot as plt
 import numpy as np
 import typer
+from dev.datapaths import TDE_PARAMETERS
 from matplotlib.colors import LogNorm
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 import richio
-from dev.datapaths import TDE_PARAMETERS
-
 
 RESULT_ROOT = Path("/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection")
 OUTPUT_ROOT = RESULT_ROOT / "analysis" / "shock-locations"
@@ -476,11 +605,28 @@ def render_plane(
 
 
 def main(
-    task_index: int = typer.Option(..., min=0, help="Zero-based selected result index"),
+    task_index: int | None = typer.Option(
+        None,
+        min=0,
+        help="Zero-based index in sorted result files; use --list-only to inspect.",
+    ),
+    result: Path | None = typer.Option(
+        None, help="Single shockfinder_snap_NNNN.npz, instead of --task-index."
+    ),
+    result_root: Path = typer.Option(
+        RESULT_ROOT,
+        help="Shock-finder input root; contains RUN/shockfinder_snap_NNNN.npz.",
+    ),
+    output_root: Path | None = typer.Option(
+        None, help="Output root; defaults to RESULT_ROOT/analysis/shock-locations."
+    ),
+    per_cell_root: Path | None = typer.Option(
+        None, help="Per-cell input root; defaults to RESULT_ROOT/analysis/per-cell."
+    ),
     workers: int = typer.Option(
         int(os.environ.get("SLURM_CPUS_PER_TASK", "1")),
         min=1,
-        help="Reserved worker count",
+        help="Workers for richio projection queries",
     ),
     dpi: int = typer.Option(240, min=100, help="Output PNG resolution"),
     overwrite: bool = typer.Option(False, help="Rebuild histograms and figures"),
@@ -495,7 +641,25 @@ def main(
     ),
     list_only: bool = typer.Option(False, help="Print the selected result and exit"),
 ) -> None:
-    results = selected_results()
+    """Plot XY/YZ gas projections and filtered shock-surface cell counts."""
+    global RESULT_ROOT, OUTPUT_ROOT, PER_CELL_ROOT
+    result_root = result.parent.parent if result is not None else result_root
+    RESULT_ROOT = result_root
+    OUTPUT_ROOT = output_root or result_root / "analysis/shock-locations"
+    PER_CELL_ROOT = per_cell_root or result_root / "analysis/per-cell"
+    if result is not None and task_index is not None:
+        raise typer.BadParameter("Choose --result or --task-index, not both.")
+    results = [result] if result is not None else selected_results()
+    if list_only and task_index is None:
+        for index, path in enumerate(results):
+            print(f"[{index:02d}] {path}")
+        return
+    if task_index is None:
+        if len(results) != 1:
+            raise typer.BadParameter(
+                "Choose --result or --task-index; use --list-only to inspect results."
+            )
+        task_index = 0
     if task_index >= len(results):
         raise typer.BadParameter(
             f"--task-index must be between 0 and {len(results) - 1}"
@@ -512,7 +676,8 @@ def main(
         return
 
     cache = cache_path(run, snapnum)
-    if overwrite or not cache_complete(cache):
+    rebuilt = overwrite or not cache_complete(cache)
+    if rebuilt:
         build_cache(result_path, cache, workers)
     else:
         print(f"Using cached histograms {cache}")
@@ -524,7 +689,7 @@ def main(
         if (
             destination.is_file()
             and destination.stat().st_size > 0
-            and not (overwrite or rerender)
+            and not (overwrite or rerender or rebuilt)
         ):
             print(f"Exists {destination}")
             continue

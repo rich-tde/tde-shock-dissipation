@@ -1,34 +1,88 @@
 #!/usr/bin/env python3
-"""Rosseland optical-depth movie: tau = int alpha_ross dr.
+r"""Render a time-evolution movie of Rosseland column optical depth.
 
-Self-contained sibling of :mod:`render_evolution_multi` for a single field that
-is *not* stored on disk: alpha_ross(T, rho), the Rosseland extinction
-coefficient [cm^-1] interpolated per cell from the STA opacity table via
-:mod:`opacity_interpolator`. Reuses the shared-index-map machinery
-(:func:`render_evolution_multi._index_map`) and BH-frame shim
-(:mod:`tde_frame`), but builds its own :class:`~richio.render.grid.UniformGrid`
-instead of going through richio's ``DERIVED_FIELDS`` registry, so nothing here
-touches the richio package.
+The per-cell Rosseland extinction coefficient ``alpha_ross(T, rho)`` in
+``cm**-1`` is interpolated from STA tables, resampled onto a uniform grid and
+integrated along the camera ray. The resulting ``tau = integral(alpha dl)``
+is dimensionless and covers the whole chosen box. It is neither escaping
+luminosity nor the optical depth from each individual cell to the surface.
 
-``mode="projection", weight=None`` makes ``richio.render.volume_image`` compute
-a plain, unweighted ``int field dl`` along the camera ray -- with the field
-tagged ``1/cm`` against a ``length_unit="cm"`` grid, that integral is exactly
-the dimensionless Rosseland optical depth tau.
+Input files
+-----------
+``RUN_DIR`` (positional argument)
+    Top-level or ``snap_<n>/`` HDF5 files named ``snap_<n>.h5`` or
+    ``snap_full_<n>.h5``, or extracted ``snap_<n>/`` NPY directories. Requires
+    density, temperature and coordinates (default ``CMx,CMy,CMz``). Optional
+    ``tfb_<n>.txt`` files supply fallback-time labels. Snapshot selection uses
+    inclusive ``--start``/``--end`` and ``--step``. ``--bh-frame`` and
+    ``--switch-snap`` must match the run's frame transition and orbit.
+``/home/hey4/RICH/data/STA/{T,rho,ross,scatter}.txt``
+    Opacity tables read by ``scripts/opacity_interpolator.py``. Fixed A/B/C
+    rendering boxes are in code lengths (solar-radius scale), not mass-scaled.
 
-Example (face-on, box A)::
+Output files
+------------
+``<outdir>/<tag>_<camera>_<box>.mp4``
+    H.264 movie; defaults are ``outdir=reports/movies/rosseland``,
+    ``tag=rosseland``. Frames follow selected snapshot order at ``--fps``.
+    ``imageio`` decodes each as ``uint8 (H, W, 3)`` (row, column, RGB in
+    0--255). These are colour pixels rather than optical-depth values.
+``<frames-root>/rosseland_alpha/frame_<index:05d>.png``
+    Default root: ``<outdir>/<tag>_<camera>_<box>_frames``. ``index`` is a
+    zero-based movie position, not snapshot number. PIL RGBA conversion gives
+    ``uint8 (H, W, 4)``, with channel 3 alpha. ``--resolution`` sets sampling;
+    the colourbar adds image width, and encoding can round to even dimensions.
+    Image axes follow the selected camera (``faceon`` looks along z;
+    ``side`` is 15 degrees above the midplane). The colourbar is logarithmic
+    dimensionless tau; ``--vmin``/``--vmax`` are linear tau values. No optical
+    depth array, coordinate grid or opacity cube is saved.
 
-    python render_rosseland_movie.py /data1/.../ComptonHiResNewAMR \
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` (replace the input path)::
+
+    python works/movies/render_rosseland_movie.py /path/to/run \
         --camera faceon --box A --bh-frame --flip-x --scalebar \
-        --outdir reports/movies/rosseland --tag rosseland
+        --outdir data/processed/Movies/rosseland --tag rosseland --keep-frames
+
+Nonempty frames are reused with the same arguments; use a new frame root for
+changed inputs or settings. Movies are replaced on encoding; PNGs are removed
+unless ``--keep-frames`` is set. ``scan_rosseland_range.py`` helps choose fixed
+bounds before a full run; such limits alone establish neither convergence nor
+coverage of every epoch. In parallel runs ``FRAME_TIMEOUT`` (default 3600 s)
+limits how long the parent waits without a completed frame, leaving PNGs for
+resume after failure.
+
+Loading examples
+----------------
+Inspect a movie frame and its retained PNG::
+
+    import imageio.v2 as imageio
+    import numpy as np
+    from pathlib import Path
+    from PIL import Image
+
+    root = Path("data/processed/Movies/rosseland")
+    with imageio.get_reader(root / "rosseland_faceon_A.mp4") as movie:
+        rgb = movie.get_data(0)  # (H, W, 3), uint8
+        print(movie.get_meta_data(), rgb.shape)
+    path = root / "rosseland_faceon_A_frames/rosseland_alpha/frame_00000.png"
+    with Image.open(path) as image:
+        rgba = np.array(image.convert("RGBA"))  # (H, W, 4), uint8
 """
 
 import argparse
 import os
 import sys
+from pathlib import Path
 
-import numpy as np
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 import movie_zoom  # is_pencil, camera_zoom_for_box, box_selection
+import numpy as np
 import render_evolution  # BOX_PRESETS, find_snapshots, _scalebar_for_box
 import render_evolution_multi  # _index_map, _box_geometry
 import tde_frame  # make_bh_frame_loader
@@ -123,6 +177,7 @@ def _render_evolution_frame(task):
     of re-rendering everything.
     """
     from richio.render.evolution import _evolution_label
+
     import richio
 
     idx, path = task
@@ -274,9 +329,8 @@ def main(argv=None):
     )
 
     os.makedirs(args.outdir, exist_ok=True)
-    jid = os.environ.get("SLURM_JOB_ID", "local")
-    frames_root = args.frames_root or os.path.abspath(
-        f"/tmp/{args.tag}_{args.camera}_{jid}"
+    frames_root = args.frames_root or str(
+        Path(args.outdir) / f"{args.tag}_{args.camera}_{args.box}_frames"
     )
 
     views = [

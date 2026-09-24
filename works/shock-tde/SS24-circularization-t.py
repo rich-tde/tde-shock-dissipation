@@ -1,7 +1,146 @@
+r"""Prepare bound-orbital-energy and fallback tables for the SS24 diagnostic.
+
+Compute BH-frame specific orbital energy with a Paczynski-Wiita potential
+continuously matched to a harmonic core inside ``0.6*r_p``. Sum energy and
+mass only where the specific orbital energy is negative; also sum all-cell
+dissipation power. At snapshots 239 and 712, histogram bound ``dM/dE`` on
+``[-2.5*Delta_epsilon_tidal, 0]`` with 2048 bins, smooth with a Gaussian of
+sigma=3 bins, and convert energy to Keplerian return time and fallback rate.
+These tables support a circularization analysis; this script does not compute
+chi or equate shock power to loss of bound orbital energy.
+
+Input files
+-----------
+``/data1/projects/pi-rossiem/TDE_data/SS24_diag/``
+    Default input base, containing ``TEMPTDE``, ``TEMPTDE4`` and
+    ``TEMPTDE4_new`` with ``snap_<n>.h5`` and ``snap_full_<n>.h5``.
+    Uses the fixed ``1e6`` BH mass, ``1`` stellar mass, ``1`` stellar radius
+    (in code units), beta=1 model. Required snapshot fields: positions,
+    velocities, density, volume, dissipation and time. ``TEMPTDE`` is
+    corrected to the BH frame; ``TEMPTDE4`` >=820 is excluded for its restart.
+    Repeat ``--data-dir`` for relocated copies preserving these names.
+``--merge-input PATH`` (repeatable)
+    Optional existing time-series text files with the exact seven-column
+    schema below. This mode reads no raw snapshots or fallback profiles.
+
+Output files
+------------
+The default ``OUT`` is repository-relative
+``data/processed/SS24-circularization-t`` (override ``--output-dir``).
+Tables are tab-separated text written by unyt, with ``#`` name/unit/footer
+comments. ``np.loadtxt(path, ndmin=2)`` returns a plain ``float64`` array,
+without unit objects. All column indices below are zero-based.
+
+``OUT/SS24-circularization-t-1e6.txt``
+    Override with ``--timeseries-file``. Shape ``(N, 7)``: N completed
+    snapshot occurrences, normally starting at snapshot 809. Worker rows
+    follow file-processing order; merge mode sorts by snapshot number and
+    requires strictly increasing times.
+
+    Column 0, ``SNAPNUM``
+        Integer-valued snapshot ID; cast to integer after loading.
+    Column 1, ``TIME``
+        Time in ``code_time``.
+    Column 2, ``TIME_DAYS``
+        The same time converted to days.
+    Column 3, ``TFALLBACK``
+        Dimensionless ``t/t_fb``.
+    Column 4, ``EORB_BOUND``
+        Total orbital energy of bound cells, in
+        ``code_mass*code_length**2/code_time**2``.
+    Column 5, ``MBOUND``
+        Bound-cell mass in ``code_mass`` using the same energy mask.
+    Column 6, ``EDISS_TOTAL``
+        All-cell dissipation power in ``code_mass*code_length**2/code_time**3``.
+
+``OUT/fallback-rate-snap239-0.40d.txt`` and
+``OUT/fallback-rate-snap712-23.17d.txt``
+    Shape ``(2048, 6)``; one row per energy bin, sorted in increasing
+    Keplerian return time. The dates in the filenames label the source
+    snapshots; column 0 is the debris return time, not that snapshot time.
+
+    Column 0, ``RETURN_TIME``
+        Keplerian return time in days, ``2*pi*G*Mbh/(2*abs(E))**1.5``.
+    Column 1, ``SPECIFIC_ENERGY``
+        Negative energy-bin centre in ``erg/g``.
+    Column 2, ``DMDENERGY_RAW``
+        Mass histogram divided by energy-bin width, in ``g**2/erg``.
+    Column 3, ``DMDENERGY_SMOOTH``
+        Gaussian-smoothed mass distribution, same units as column 2.
+    Column 4, ``MDOT_RAW``
+        Unsmoothed ``(dM/dE)*abs(dE/dt)`` in ``Msun/yr``.
+    Column 5, ``MDOT_SMOOTH``
+        Smoothed fallback rate in ``Msun/yr``.
+
+    Zero histogram support can give zero fallback rate; no NaN mask is
+    introduced here. Mass below ``-2.5*Delta_epsilon_tidal`` is excluded.
+
+Usage
+-----
+From ``/home/hey4/rich_tde`` with the ``richanalysis`` environment::
+
+    python works/shock-tde/SS24-circularization-t.py
+    python works/shock-tde/SS24-circularization-t.py \
+        --start-snapshot 923 --end-snapshot 950 --skip-fallback \
+        --timeseries-file data/processed/SS24-circularization-t/shard-a.txt
+    python works/shock-tde/SS24-circularization-t.py \
+        --merge-input data/processed/SS24-circularization-t/shard-a.txt \
+        --merge-input data/processed/SS24-circularization-t/shard-b.txt \
+        --timeseries-file data/processed/SS24-circularization-t/merged.txt \
+        --require-contiguous
+
+The merge example assumes ``shard-b.txt`` has been generated for a subsequent
+range. Repeat ``--merge-input`` for every wanted file, including an old main
+checkpoint if it should be included. Identical duplicate rows are collapsed;
+conflicting duplicates, wrong schemas and non-increasing times are rejected.
+``--require-contiguous`` additionally rejects snapshot-number gaps. Replacing
+an existing merge destination requires ``--overwrite``.
+
+Workers resume existing rows by snapshot occurrence and reuse existing fallback
+tables. ``--overwrite`` recomputes the selected products; ``--skip-fallback``
+omits fallback work. Checkpoint writes are atomic. Use a new output when
+changing sources/ranges; resuming assumes compatible previous settings.
+
+Loading examples
+----------------
+Load bound energy and mass, and recover their physical units::
+
+    from pathlib import Path
+    import numpy as np
+    import unyt as u
+    import richio
+
+    root = Path("data/processed/SS24-circularization-t")
+    table = np.loadtxt(root / "SS24-circularization-t-1e6.txt", ndmin=2)
+    # table is (N, 7); columns 1 and 2 contain the same time in different units.
+    snapshot = table[:, 0].astype(int)
+    time_days = table[:, 2]
+    registry = richio.units.registry
+    energy = u.unyt_array(
+        table[:, 4], "code_mass*code_length**2/code_time**2",
+        registry=registry,
+    ).to("erg")
+    mass = u.unyt_array(table[:, 5], richio.units.mscale).to("g")
+    # Dividing these gives mean specific orbital energy of the bound gas.
+    specific_energy = energy / mass  # (N,), erg/g
+
+Load the late fallback profile for plotting or interpolation::
+
+    fallback = np.loadtxt(root / "fallback-rate-snap712-23.17d.txt", ndmin=2)
+    assert fallback.shape == (2048, 6)
+    return_time_days = fallback[:, 0]
+    mdot_msun_per_year = fallback[:, 5]  # Smoothed; raw is column 4.
+    mdot_at_snapshot_times = np.interp(
+        time_days, return_time_days, mdot_msun_per_year,
+        left=np.nan, right=np.nan,
+    )
+"""
+
 import glob
 import os
 import re
 from collections import Counter
+from pathlib import Path
 
 import numpy as np
 import typer
@@ -9,11 +148,14 @@ import unyt as u
 from loguru import logger
 from scipy.ndimage import gaussian_filter1d
 
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
+
 import dev
 import richio
 
-
-app = typer.Typer()
+app = typer.Typer(add_completion=False)
 
 DATADIRS = (
     "/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE",
@@ -85,6 +227,10 @@ def load_existing_timeseries(path):
     if not os.path.exists(path) or os.path.getsize(path) == 0:
         return ([], [], [], [], [], [], [])
 
+    with open(path) as handle:
+        header = handle.readline().lstrip("# ").split()
+    if header != TIMESERIES_HEADER.split():
+        raise ValueError(f"{path} does not have the SS24 time-series column schema")
     raw = np.atleast_2d(np.loadtxt(path, delimiter="\t"))
     if raw.shape[1] != 7:
         raise ValueError(f"{path} has {raw.shape[1]} columns; expected exactly 7")
@@ -266,6 +412,48 @@ def save_fallback_profile(path, snapnum, time, specific_energy, cell_mass):
     )
 
 
+def merge_timeseries(paths, output, require_contiguous=False):
+    """Merge matching-schema shards; reject conflicting rows and preserve units."""
+    columns = [[] for _ in range(7)]
+    for path in paths:
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError(f"Missing or empty merge input: {path}")
+        for target, source in zip(columns, load_existing_timeseries(path)):
+            target.extend(source)
+    if not columns[0]:
+        raise ValueError("No time-series rows to merge")
+    raw = np.column_stack(columns)
+    raw = raw[np.argsort(raw[:, 0], kind="stable")]
+    kept = []
+    for row in raw:
+        if kept and row[0] == kept[-1][0]:
+            if not np.array_equal(row, kept[-1]):
+                raise ValueError(f"Conflicting rows for snapshot {int(row[0])}")
+        else:
+            kept.append(row)
+    raw = np.asarray(kept)
+    if np.any(np.diff(raw[:, 2]) <= 0):
+        raise ValueError("Merged times are not strictly increasing")
+    if require_contiguous and np.any(np.diff(raw[:, 0]) != 1):
+        raise ValueError("Merged snapshot numbers contain gaps")
+    units = [
+        "dimensionless",
+        "code_time",
+        "day",
+        "dimensionless",
+        "code_length**2*code_mass/code_time**2",
+        "code_mass",
+        "code_length**2*code_mass/code_time**3",
+    ]
+    arrays = [
+        u.unyt_array(values, unit, registry=richio.units.registry)
+        for values, unit in zip(raw.T, units)
+    ]
+    output.parent.mkdir(parents=True, exist_ok=True)
+    save_timeseries_atomic(output, arrays)
+    logger.info("Merged {} rows into {}", len(raw), output)
+
+
 @app.command()
 def main(
     start_snapshot: int = typer.Option(
@@ -274,16 +462,53 @@ def main(
     end_snapshot: int = typer.Option(
         10_000, help="Last snapshot included in the time series"
     ),
-    timeseries_file: str = typer.Option(
-        TIMESERIES_FILE, help="Checkpoint/output path for this snapshot range"
+    timeseries_file: Path | None = typer.Option(
+        None,
+        help="Checkpoint/output path; defaults to OUTPUT_DIR/SS24-circularization-t-1e6.txt.",
+    ),
+    output_dir: Path = typer.Option(
+        Path(OUTPUT_DIR),
+        help="Directory for fallback profiles and the default time series.",
+    ),
+    data_dir: list[Path] | None = typer.Option(
+        None, help="Repeat for relocated copies of the 1e6 run/restart directories."
+    ),
+    merge_input: list[Path] | None = typer.Option(
+        None, help="Merge only these tables; repeat per input. No snapshots loaded."
+    ),
+    require_contiguous: bool = typer.Option(
+        False, help="Reject gaps in snapshot numbers when merging."
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        help="Recompute selected products, or permit replacing a merge destination.",
     ),
     skip_fallback: bool = typer.Option(
         False, help="Do not build the two fallback profiles (for Slurm shards)"
     ),
 ):
     """Reproduce the SS24 fallback-normalized circularization diagnostic."""
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    arrays = load_existing_timeseries(timeseries_file)
+    timeseries_file = timeseries_file or output_dir / "SS24-circularization-t-1e6.txt"
+    if merge_input:
+        if timeseries_file.exists() and not overwrite:
+            raise typer.BadParameter(
+                "Merge destination exists; use --overwrite or another --timeseries-file"
+            )
+        merge_timeseries(merge_input, timeseries_file, require_contiguous)
+        return
+    if end_snapshot < start_snapshot:
+        raise typer.BadParameter("--end-snapshot must be at least --start-snapshot")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timeseries_file.parent.mkdir(parents=True, exist_ok=True)
+    fallback_paths = {
+        number: output_dir / Path(path).name
+        for number, path in FALLBACK_SNAPSHOTS.items()
+    }
+    arrays = (
+        tuple([] for _ in range(7))
+        if overwrite
+        else load_existing_timeseries(timeseries_file)
+    )
     (
         snapnums,
         times,
@@ -299,18 +524,18 @@ def main(
             "Resuming {} with {} completed rows", timeseries_file, len(snapnums)
         )
 
-    for directory in DATADIRS:
+    for directory in data_dir or DATADIRS:
         logger.info("Scanning {}", directory)
         for snapshot_path in snapshot_files(directory):
             snapnum = snapshot_number(snapshot_path)
             if os.path.basename(directory) == "TEMPTDE4" and snapnum >= 820:
                 continue
 
-            fallback_path = FALLBACK_SNAPSHOTS.get(snapnum)
+            fallback_path = fallback_paths.get(snapnum)
             needs_fallback = (
                 not skip_fallback
                 and fallback_path is not None
-                and not os.path.exists(fallback_path)
+                and (overwrite or not os.path.exists(fallback_path))
             )
             needs_timeseries = start_snapshot <= snapnum <= end_snapshot
             if not needs_fallback and not needs_timeseries:

@@ -1,13 +1,127 @@
 #!/usr/bin/env python3
-"""Render physical-field and diagnostic nozzle ``yz`` slices.
+"""Cache and plot nozzle YZ physical fields and vertical-flow diagnostics.
 
-Both products use the same pericentre-scaled geometry. The geometry is the
-original broad notebook box normalized by the 1e4-run pericentre and then
-scaled by each run's own pericentre; plotted coordinates are shown in solar
-radii. The physical-field product contains density, gas pressure, gas
-temperature, and dissipation; density is overlaid with in-plane velocity
-streamlines. The diagnostic product contains ``|v_z|/c_s``, cell entropy,
-``|v_z|``, and sound speed.
+Correct positions to the black-hole (BH) frame when needed and sample a
+constant-x plane with nearest-cell grids. For 1e4 the standard geometry is
+``x=13``, ``y=(-10, 10)``, ``z=(-5, 5)`` in code-length units; lengths scale
+with each run's pericentre radius relative to 1e4. ``--y-center-rsun`` shifts the
+box and ``--box-scale`` changes its width. The vertical-speed proxy uses
+``c_s=sqrt(gamma_eff*P/rho)``, ``gamma_eff=1+P/(rho*e_internal)``. It is not a
+shock-normal jump Mach number. Cell entropy is extensive, not specific.
+Stored velocities retain the snapshot frame; only positions are corrected.
+
+Input files
+-----------
+Raw ``snap_full_N.h5`` or ``snap_N.h5`` snapshots resolved by
+``dev.datapaths``; ``dev/dev/datapaths.py`` defines directories and restart
+rules, and ``--list-only`` prints paths. Required fields are positions,
+volume, time, density, pressure, temperature, dissipation, velocity,
+specific internal energy and specific entropy, read with ``richio.load``.
+Modes ``1/2/3`` select the ``1e4/1e5/1e6`` solar-mass BH runs. Default
+``t/t_fb`` samples are 1e4: ``0.5, 1, 1.5, 2``; 1e5: ``0.3, 0.5``;
+1e6: ``1, 1.2, 1.4, 1.5``, plus each run's last snapshot.
+
+Output files
+------------
+Under ``/home/hey4/rich_tde/data/processed/NozzleYZSlices/`` unless
+``--output-root`` is supplied. ``RUN`` is the run label, ``NNNN`` the
+zero-padded snapshot number and ``R=RES`` the resolution (default 768).
+The legacy ``*_rsun`` names and CLI labels mean division by
+``richio.units.lscale=7e10 cm`` here, not conversion to exact unyt ``Rsun``
+(6.957e10 cm). Multiply a stored length by ``7e10`` to obtain cm.
+All NPZ keys below are float64 arrays; scalars have shape ``()`` and use
+``.item()``. Logarithmic fields store NaN for nonpositive/nonfinite source
+values, with no separate mask. Velocity/proxy fields are not sanitized.
+
+``RUN/grids/nozzle_yz_snap_NNNN_RES.npz``
+    Compressed NumPy archive. All 2-D arrays have shape ``(R, R)`` with
+    ``[i, j]`` corresponding to ``y_rsun[i], z_rsun[j]``. Transpose them
+    for Matplotlib ``pcolormesh`` or ``streamplot``.
+
+    ``y_rsun``, ``z_rsun`` : shape ``(R,)``
+        BH-frame sample coordinates in code-length units, uniformly spaced;
+        upper box edges are excluded.
+    ``time_tfb``, ``box_scale`` : shape ``()``
+        Dimensionless snapshot time/fallback time and box-width multiplier.
+    ``y_center_rsun`` : shape ``()``
+        Applied y-center shift in code-length units. Older caches may lack this
+        and ``box_scale``; the CLI rebuilds them when checking geometry.
+    ``density``, ``pressure``, ``temperature``, ``dissipation`` : shape ``(R, R)``
+        Log10 of density [g/cm^3], gas pressure [dyn/cm^2], temperature [K],
+        and volumetric dissipation [erg/s/cm^3], respectively.
+    ``vy_kms``, ``vz_stream_kms`` : shape ``(R, R)``
+        Linear, signed y/z velocity components in km/s for streamlines.
+    ``abs_vz_mach_proxy`` : shape ``(R, R)``
+        Linear dimensionless ``abs(v_z)/c_s``. Figures use limits 0 to 80;
+        the saved values are not clipped to that range.
+    ``cell_entropy`` : shape ``(R, R)``
+        Log10 of ``specific_entropy*density*volume`` in erg/K per cell.
+    ``abs_vz_kms``, ``sound_speed_kms`` : shape ``(R, R)``
+        Log10 of ``abs(v_z)`` and ``c_s``, respectively, in km/s.
+
+``RUN/nozzle_yz_snap_NNNN.png``
+    Four physical-field panels; density includes velocity streamlines.
+``RUN/nozzle_yz_diagnostics_snap_NNNN.png``
+    Four vertical-flow panels. Both PNG products are raster figures with
+    dimensions set by ``--dpi``; use NPZ arrays for quantitative analysis.
+
+The importable ``cache_orbit_snapshot`` helper writes a separate compressed
+NPZ to its caller-supplied path; the CLI does not generate that product.
+It samples a vertical sheet along a ballistic returning Paczynski-Wiita
+orbit. Let ``R`` be its ``resolution``; all grid axes are ``(phi, z)``.
+Its complete schema is:
+
+``phi``, ``z_rsun``, ``orbit_x_rp``, ``orbit_y_rp`` : shape ``(R,)``
+    Orbital angle [radians], height [code length], and midline BH-frame x/y
+    coordinates [r_p]. ``phi`` is sampled uniformly; ``orbit_x_rp[i]`` and
+    ``orbit_y_rp[i]`` belong to the same ``phi[i]``.
+``time_tfb``, ``box_scale``, ``radius_scale`` : shape ``()``
+    Dimensionless time/fallback time, box multiplier and orbital-radius
+    multiplier relative to the standard pericentre radius.
+``phase_offset_deg`` : shape ``()``
+    Applied orbital phase offset in degrees.
+``density``, ``pressure``, ``temperature``, ``dissipation`` : shape ``(R, R)``
+    Same log10 units/NaN convention as the straight YZ product, now sampled
+    at ``phi[i], z_rsun[j]`` rather than at constant x.
+``dphi_dt``, ``dz_rsun_dt`` : shape ``(R, R)``
+    Linear flow components: angular rate [radians/s] and the time derivative
+    of ``z/lscale`` [1/s]. These drive streamlines in ``(phi, z/lscale)`` space.
+
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` with the richanalysis Python environment::
+
+    python works/shock-tde/nozzle-yz-slices.py --mode 1 --list-only
+    python works/shock-tde/nozzle-yz-slices.py --mode 1 --snapshot 77 --workers 8
+    python works/shock-tde/nozzle-yz-slices.py --mode 2 --snapshot 161 --y-center-rsun -20 --box-scale 1.2 --output-root data/processed/ShiftedNozzleYZ
+
+Repeat ``--snapshot``/``--tfb`` to replace default samples; ``--include-last``
+adds the final snapshot (alone, selects only the final snapshot). Complete
+caches/figures are skipped; ``--overwrite`` recomputes and ``--rerender``
+redraws cached data. Geometry/resolution changes rebuild grids and figures.
+Use ``--rerender`` after changing only the time selection for common colour
+limits, and distinct output roots to preserve different geometries.
+
+Loading examples
+----------------
+Plot the linear vertical Mach proxy from the snapshot-77 output::
+
+    from pathlib import Path
+    import dev
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    root = Path("data/processed/NozzleYZSlices/1e4/grids")
+    with np.load(root / "nozzle_yz_snap_0077_768.npz") as data:
+        y, z = data["y_rsun"], data["z_rsun"]
+        mach = data["abs_vz_mach_proxy"]
+        time_tfb = data["time_tfb"].item()
+    print(f"t/t_fb={time_tfb:.3f}; grid shape={mach.shape}")
+    fig, ax = plt.subplots()
+    image = ax.pcolormesh(y, z, mach.T, shading="auto")
+    ax.set(xlabel="y [code length]", ylabel="z [code length]", aspect="equal")
+    fig.colorbar(image, ax=ax, label="|v_z|/c_s")
+    plt.show()
 """
 
 from __future__ import annotations
@@ -19,21 +133,26 @@ from dataclasses import dataclass
 from pathlib import Path
 
 os.environ.setdefault("MPLBACKEND", "Agg")
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-rich-tde-nozzle-yz")
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import dev
+
+# Apply the repository plotting style before importing pyplot.
+# isort: split
+
 import matplotlib.pyplot as plt
 import numpy as np
 import typer
 import unyt as u
+from dev.datapaths import TDE_PARAMETERS
+from richio.plots import scalar_map
 from scipy.integrate import solve_ivp
 
 import richio
 from dev import DATAPATHS, SNAPSHOT_TFB
-from dev.datapaths import TDE_PARAMETERS
-from richio.plots import scalar_map
-
 
 REPO = Path("/home/hey4/rich_tde")
 OUTPUT_ROOT = REPO / "data/processed/NozzleYZSlices"
@@ -133,14 +252,24 @@ def mode_settings(mode: int) -> RunConfig:
         raise ValueError("mode must be 1 (1e4), 2 (1e5), or 3 (1e6)") from exc
 
 
-def selected_snapshots(run: str) -> list[tuple[int, Path, bool]]:
-    selected = [
-        (*SNAPSHOT_TFB(run, requested_tfb), False)
-        for requested_tfb in REQUESTED_TFBS[run]
-    ]
+def selected_snapshots(
+    run: str,
+    snapshots: list[int] | None = None,
+    tfbs: list[float] | None = None,
+    include_last: bool = False,
+) -> list[tuple[int, Path, bool]]:
+    """Resolve explicit snapshots/times, or the established samples plus last."""
     snapnums, paths = DATAPATHS(run)
-    selected.append((snapnums[-1], paths[-1], True))
-    return [(snapnum, Path(path), is_last) for snapnum, path, is_last in selected]
+    available = dict(zip(snapnums, paths))
+    use_defaults = not snapshots and not tfbs and not include_last
+    requested = REQUESTED_TFBS[run] if use_defaults else (tfbs or [])
+    selected = [(*SNAPSHOT_TFB(run, tfb), False) for tfb in requested]
+    selected.extend((number, available[number], False) for number in snapshots or [])
+    if use_defaults or include_last:
+        selected.append((snapnums[-1], paths[-1], True))
+    # Several requested times can resolve to the same snapshot.
+    unique = {number: (number, Path(path), last) for number, path, last in selected}
+    return list(unique.values())
 
 
 def needs_reference_frame(run: str, path: Path) -> bool:
@@ -384,7 +513,12 @@ def grid_indices(
     )
 
 
-def cache_complete(path: Path, resolution: int) -> bool:
+def cache_complete(
+    path: Path,
+    resolution: int,
+    y_center_rsun: float | None = None,
+    box_scale: float | None = None,
+) -> bool:
     grids = [name for name, *_ in BROAD_FIELDS]
     grids += ["vy_kms", "vz_stream_kms"]
     grids += [name for name, *_ in DIAGNOSTIC_FIELDS]
@@ -397,6 +531,20 @@ def cache_complete(path: Path, resolution: int) -> bool:
                 all(name in data for name in grids + axes + ["time_tfb"])
                 and all(data[name].shape == (resolution, resolution) for name in grids)
                 and all(data[name].shape == (resolution,) for name in axes)
+                and (
+                    y_center_rsun is None
+                    or (
+                        "y_center_rsun" in data
+                        and np.isclose(float(data["y_center_rsun"]), y_center_rsun)
+                    )
+                )
+                and (
+                    box_scale is None
+                    or (
+                        "box_scale" in data
+                        and np.isclose(float(data["box_scale"]), box_scale)
+                    )
+                )
             )
     except (OSError, ValueError):
         return False
@@ -602,8 +750,23 @@ def render_diagnostics(cache_path: Path, destination: Path, limits, dpi: int) ->
 
 def main(
     mode: int = typer.Option(..., help="1: 1e4, 2: 1e5, 3: 1e6 solar-mass BH"),
+    snapshot: list[int] | None = typer.Option(
+        None, help="Snapshot number; repeat for several. Overrides default samples."
+    ),
+    tfb: list[float] | None = typer.Option(
+        None, help="Nearest t/t_fb; repeat for several. Overrides default samples."
+    ),
+    include_last: bool = typer.Option(
+        False, help="Include the final snapshot; alone selects only the final snapshot."
+    ),
     resolution: int = typer.Option(768, min=16, help="Pixels along each slice axis"),
     workers: int = typer.Option(8, min=1, help="KD-tree query threads"),
+    y_center_rsun: float = typer.Option(
+        0.0, help="YZ box center in y, measured in solar radii."
+    ),
+    box_scale: float = typer.Option(
+        1.0, min=0.001, help="Multiply the standard YZ box half-widths by this factor."
+    ),
     dpi: int = typer.Option(240, min=50, help="Output PNG resolution"),
     output_root: Path = typer.Option(OUTPUT_ROOT, help="Study output directory"),
     overwrite: bool = typer.Option(False, help="Recompute cached grids and figures"),
@@ -614,8 +777,9 @@ def main(
         False, help="Print selected snapshots without loading them"
     ),
 ) -> None:
+    """Cache and plot YZ nozzle physical fields and vertical-flow diagnostics."""
     config = mode_settings(mode)
-    selected = selected_snapshots(config.run)
+    selected = selected_snapshots(config.run, snapshot, tfb, include_last)
     output_dir = output_root / config.run
     cache_dir = output_dir / "grids"
 
@@ -625,12 +789,18 @@ def main(
         return
 
     cache_paths = []
+    rebuilt = False
     for snapnum, path, _ in selected:
         cache_path = cache_dir / f"nozzle_yz_snap_{snapnum:04d}_{resolution}.npz"
         cache_paths.append(cache_path)
-        if overwrite or not cache_complete(cache_path, resolution):
+        if overwrite or not cache_complete(
+            cache_path, resolution, y_center_rsun, box_scale
+        ):
             print(f"[{config.run}] gridding snap {snapnum}", flush=True)
-            cache_snapshot(path, cache_path, config, resolution, workers)
+            cache_snapshot(
+                path, cache_path, config, resolution, workers, y_center_rsun, box_scale
+            )
+            rebuilt = True
         else:
             print(f"[{config.run}] cached snap {snapnum}", flush=True)
 
@@ -644,7 +814,7 @@ def main(
             (diagnostics, render_diagnostics, diagnostic_color_limits),
         ):
             exists = destination.is_file() and destination.stat().st_size > 0
-            if exists and not overwrite and not rerender:
+            if exists and not overwrite and not rerender and not rebuilt:
                 print(f"[{config.run}] exists {destination.name}", flush=True)
                 continue
             print(f"[{config.run}] rendering {destination.name}", flush=True)

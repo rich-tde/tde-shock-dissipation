@@ -1,10 +1,90 @@
 #!/usr/bin/env python3
-"""Plot four-panel nozzle-region midplane slices at selected fallback times.
+"""Cache and plot density, pressure, temperature and dissipation near the nozzle.
 
-The snapshot selection exactly follows ``0.1-plot-Ediss-distribution.ipynb``.
-Each run uses common colour limits across its selected snapshots.  Interpolated
-logarithmic grids and in-plane velocities are cached so interrupted Slurm jobs
-can resume cheaply.  Density panels include velocity streamlines.
+For each selected snapshot, correct coordinates to the black-hole (BH) frame
+when needed and sample the ``z=0`` plane with richio's nearest-cell grid.
+The window is ``x/r_p=(-1, 2)``, ``y/r_p=(-1.5, 1.5)``. These are local
+slices, not line-of-sight projections or integrated dissipation measurements.
+Density panels also show the stored velocity components as streamlines;
+only positions, not velocities, receive the frame correction in this tool.
+
+Input files
+-----------
+Raw ``snap_full_N.h5`` or ``snap_N.h5`` snapshots resolved by
+``dev.datapaths.DATAPATHS`` and ``SNAPSHOT_TFB``. The catalogue and restart
+rules are in ``dev/dev/datapaths.py``; ``--list-only`` prints exact paths.
+Required fields are positions, volume, density, gas pressure, temperature,
+volumetric dissipation, x/y velocity and time, read through ``richio.load``.
+``--mode 1/2/3`` selects the ``1e4/1e5/1e6`` solar-mass BH model.
+Default ``t/t_fb`` samples are ``0.5, 1, 1.5, 2`` for 1e4; ``0.3, 0.5``
+for 1e5; and ``1, 1.2, 1.4, 1.5`` for 1e6, plus each run's last snapshot.
+
+Output files
+------------
+Under ``data/processed/NozzleZoomSlices/`` (absolute default relative to
+``/home/hey4/rich_tde``; override with ``--output-root``):
+
+``RUN/grids/nozzle_zoom_snap_NNNN_RES.npz``
+    Compressed NumPy archive; load with ``np.load``. ``RUN`` is the run label,
+    ``NNNN`` the zero-padded snapshot number, and ``RES`` the resolution
+    (default 768). Let ``R=RES``. All keys are float64 arrays; metadata has
+    shape ``()`` and is read with ``.item()``. Grid entry ``[i, j]`` refers
+    to ``x_rp[i], y_rp[j]``; transpose grids for Matplotlib ``pcolormesh``.
+
+    ``x_rp``, ``y_rp`` : shape ``(R,)``
+        BH-frame sample coordinates divided by pericentre radius ``r_p``;
+        dimensionless, uniformly spaced and excluding the upper box edge.
+    ``time_tfb`` : shape ``()``
+        Snapshot time divided by fallback time; dimensionless.
+    ``density``, ``pressure``, ``temperature``, ``dissipation`` : shape ``(R, R)``
+        Base-10 logarithms of density [g/cm^3], gas pressure [dyn/cm^2],
+        temperature [K], and volumetric dissipation [erg/s/cm^3], respectively.
+        Nonpositive or nonfinite source values become NaN; there is no
+        separate validity mask. Recover linear values with ``10.0 ** grid``.
+    ``vx_kms``, ``vy_kms`` : shape ``(R, R)``
+        Signed snapshot x/y velocities in km/s, linear (not logarithms).
+
+``RUN/nozzle_zoom_snap_NNNN.png``
+    Four-panel raster figure with colour limits shared by the selected
+    snapshots; density includes velocity streamlines. Pixel dimensions
+    depend on ``--dpi``. Use the NPZ for quantitative analysis.
+
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` with the richanalysis Python environment::
+
+    python works/shock-tde/nozzle-zoom-slices.py --mode 1 --list-only
+    python works/shock-tde/nozzle-zoom-slices.py --mode 1 --snapshot 77 --workers 8
+    python works/shock-tde/nozzle-zoom-slices.py --mode 2 --tfb 0.3 --tfb 0.5 --rerender
+
+Repeat ``--snapshot`` or ``--tfb`` to replace default samples.
+``--include-last`` appends the final snapshot (alone, selects only that one).
+Complete caches and figures are skipped; ``--overwrite`` recomputes both;
+``--rerender`` redraws cached grids. Any new grid triggers rerendering of the
+selection for common colour limits. When only the selection changes and all
+grids already exist, supply ``--rerender``. Use a separate output root to
+retain variants. Figures are external; notebooks are not modified.
+
+Loading examples
+----------------
+Load the output of the snapshot-77 command above and plot linear density::
+
+    from pathlib import Path
+    import dev  # Apply the repository plot style before importing pyplot.
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    root = Path("data/processed/NozzleZoomSlices/1e4/grids")
+    with np.load(root / "nozzle_zoom_snap_0077_768.npz") as data:
+        x, y = data["x_rp"], data["y_rp"]
+        density = 10.0 ** data["density"]
+        time_tfb = data["time_tfb"].item()
+    print(f"t/t_fb={time_tfb:.3f}; density shape={density.shape}")
+    fig, ax = plt.subplots()
+    image = ax.pcolormesh(x, y, density.T, shading="auto")
+    ax.set(xlabel="x/r_p", ylabel="y/r_p", aspect="equal")
+    fig.colorbar(image, ax=ax, label="Density [g/cm^3]")
+    plt.show()
 """
 
 from __future__ import annotations
@@ -16,19 +96,24 @@ from dataclasses import dataclass
 from pathlib import Path
 
 os.environ.setdefault("MPLBACKEND", "Agg")
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-rich-tde-nozzle-slices")
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import dev
+
+# Apply the repository plotting style before importing pyplot.
+# isort: split
+
 import matplotlib.pyplot as plt
 import numpy as np
 import typer
-
-import richio
-from dev import DATAPATHS, SNAPSHOT_TFB
 from dev.datapaths import TDE_PARAMETERS
 from richio.plots import scalar_map
 
+import richio
+from dev import DATAPATHS, SNAPSHOT_TFB
 
 REPO = Path("/home/hey4/rich_tde")
 OUTPUT_ROOT = REPO / "data/processed/NozzleZoomSlices"
@@ -106,14 +191,24 @@ def mode_settings(mode: int) -> RunConfig:
         raise ValueError("mode must be 1 (1e4), 2 (1e5), or 3 (1e6)") from exc
 
 
-def selected_snapshots(run: str) -> list[tuple[int, Path, bool]]:
-    selected = [
-        (*SNAPSHOT_TFB(run, requested_tfb), False)
-        for requested_tfb in REQUESTED_TFBS[run]
-    ]
+def selected_snapshots(
+    run: str,
+    snapshots: list[int] | None = None,
+    tfbs: list[float] | None = None,
+    include_last: bool = False,
+) -> list[tuple[int, Path, bool]]:
+    """Resolve explicit snapshots/times, or the established samples plus last."""
     snapnums, paths = DATAPATHS(run)
-    selected.append((snapnums[-1], paths[-1], True))
-    return [(snapnum, Path(path), is_last) for snapnum, path, is_last in selected]
+    available = dict(zip(snapnums, paths))
+    use_defaults = not snapshots and not tfbs and not include_last
+    requested = REQUESTED_TFBS[run] if use_defaults else (tfbs or [])
+    selected = [(*SNAPSHOT_TFB(run, tfb), False) for tfb in requested]
+    selected.extend((number, available[number], False) for number in snapshots or [])
+    if use_defaults or include_last:
+        selected.append((snapnums[-1], paths[-1], True))
+    # Several requested times can resolve to the same snapshot.
+    unique = {number: (number, Path(path), last) for number, path, last in selected}
+    return list(unique.values())
 
 
 def needs_reference_frame(run: str, path: Path) -> bool:
@@ -284,6 +379,15 @@ def render_figure(
 
 def main(
     mode: int = typer.Option(..., help="1: 1e4, 2: 1e5, 3: 1e6 solar-mass BH"),
+    snapshot: list[int] | None = typer.Option(
+        None, help="Snapshot number; repeat for several. Overrides default samples."
+    ),
+    tfb: list[float] | None = typer.Option(
+        None, help="Nearest t/t_fb; repeat for several. Overrides default samples."
+    ),
+    include_last: bool = typer.Option(
+        False, help="Include the final snapshot; alone selects only the final snapshot."
+    ),
     resolution: int = typer.Option(768, min=16, help="Pixels along each slice axis"),
     workers: int = typer.Option(8, min=1, help="KD-tree query threads"),
     dpi: int = typer.Option(240, min=50, help="Output PNG resolution"),
@@ -296,8 +400,9 @@ def main(
         False, help="Print selected snapshots without loading them"
     ),
 ) -> None:
+    """Cache and plot XY nozzle density, pressure, temperature and dissipation."""
     config = mode_settings(mode)
-    selected = selected_snapshots(config.run)
+    selected = selected_snapshots(config.run, snapshot, tfb, include_last)
     output_dir = output_root / config.run
     cache_dir = output_dir / "grids"
 
@@ -307,12 +412,14 @@ def main(
         return
 
     cache_paths = []
+    rebuilt = False
     for snapnum, path, _ in selected:
         cache_path = cache_dir / f"nozzle_zoom_snap_{snapnum:04d}_{resolution}.npz"
         cache_paths.append(cache_path)
         if overwrite or not cache_complete(cache_path, resolution):
             print(f"[{config.run}] gridding snap {snapnum}", flush=True)
             cache_snapshot(path, cache_path, config, resolution, workers)
+            rebuilt = True
         else:
             print(f"[{config.run}] cached snap {snapnum}", flush=True)
 
@@ -324,6 +431,7 @@ def main(
             and destination.stat().st_size > 0
             and not overwrite
             and not rerender
+            and not rebuilt
         ):
             print(f"[{config.run}] exists {destination.name}", flush=True)
             continue

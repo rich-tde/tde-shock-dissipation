@@ -1,9 +1,79 @@
 #!/usr/bin/env python3
-"""Render fixed-r_amin, face-on projection movies for the three TDE runs.
+r"""Render face-on density or dissipation movies in a fixed physical window.
 
-The image plane is sampled densely while the line of sight uses a cheaper sinh
-grid concentrated around z=0.  All movies use one fixed six-decade colour range
-and richio's established presentation layer.  Frames persist for safe restarts.
+Nearest-neighbour resampling uses linear x/y and a sinh z grid concentrated at
+z=0, then integrates along z. The box is fixed in
+``r_amin = R_* (M_BH/M_*)**(2/3)``. Density uses a fixed six-decade colour range;
+dissipation uses four decades. Early star-frame snapshots are moved into the
+BH frame. Ambient-density suppression is a display cut, and a column integral
+is not an emergent-emission calculation. Check grid convergence for numerical
+interpretation.
+
+Input files
+-----------
+``--mode 1|2|3``
+    Selects the ``1e4``, ``1e5`` or ``1e6`` solar-mass run. The HDF5 files/NPY
+    snapshot directories and restart exclusions come from
+    ``dev.datapaths.DATAPATHS``; stellar parameters and snapshot times come from
+    ``TDE_PARAMETERS`` and ``SNAPSHOT_TIMES``. Required fields are position,
+    time and ``density`` or ``dissipation``. Early density frames also require
+    the ``tracers/Star`` tracer and snapshot box to suppress ambient gas.
+
+Output files
+------------
+``<output-root>/<quality>/<run>/faceon_density_<run>.mp4``
+    H.264 movie; default root is ``/home/hey4/rich_tde/reports/movies/crete``.
+    Dissipation instead writes ``<quality>/<run>/dissipation/`` with basename
+    ``faceon_dissipation_<run>.mp4``. Each decoded frame is a ``uint8`` RGB
+    array of shape ``(H, W, 3)``: row, column, then red/green/blue channels
+    (0--255). Frames follow ``DATAPATHS`` order and are held in proportion to
+    physical snapshot intervals. The nominal run rates are 8/16/24 fps.
+``frames/frame_<index:05d>.png`` beside the movie
+    Annotated colour images, with zero-based ``DATAPATHS`` index in the name.
+    Preview frames are 1220 by 720 pixels (width by height), production frames
+    2440 by 1434. ``PIL.Image.convert("RGBA")`` loads a ``uint8`` array of shape
+    ``(H, W, 4)`` with alpha in channel 3. Axes are image pixels; the colourbar
+    encodes density in ``g/cm**2`` or dissipation in ``erg/s/cm**2`` using a
+    logarithmic scale. No numerical map or coordinate arrays are saved.
+``timeline.png``, ``window-comparison.png``, ``window-examples/*.png``
+    Full preview runs also save an early/middle/late contact sheet and a
+    comparison of the proposed/taller/wider windows. These are the same raster
+    format with layout-dependent ``H`` and ``W``.
+
+Usage
+-----
+Run from ``/home/hey4/rich_tde``. This renders three preview frames::
+
+    python works/movies/faceon_density.py --mode 1 --field density \
+        --quality preview --frame-start 0 --frame-stop 3 --no-examples \
+        --output-root data/processed/Movies/faceon
+
+``--frame-start``/``--frame-stop`` select list positions, with an exclusive stop;
+partial windows skip movie encoding. Existing nonempty PNGs are reused unless
+``--overwrite`` is set. ``--encode-only`` rebuilds the movie from frames;
+``--no-encode`` keeps only frames. Encoding replaces the movie. Use a separate
+output root when changing inputs, limits or rendering settings.
+
+Loading examples
+----------------
+Inspect a saved preview frame without loading a simulation snapshot::
+
+    import numpy as np
+    from PIL import Image
+    from pathlib import Path
+
+    root = Path("data/processed/Movies/faceon/preview/1e4")
+    with Image.open(root / "frames/frame_00000.png") as image:
+        rgba = np.array(image.convert("RGBA"))
+    print(rgba.shape, rgba.dtype)  # (720, 1220, 4), uint8
+
+After a complete run, inspect its encoded video::
+
+    import imageio.v2 as imageio
+
+    with imageio.get_reader(root / "faceon_density_1e4.mp4") as movie:
+        rgb = movie.get_data(0)  # (H, W, 3), uint8; display pixels only
+        print(movie.get_meta_data(), rgb.shape)
 """
 
 from __future__ import annotations
@@ -18,16 +88,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 os.environ.setdefault("MPLBACKEND", "Agg")
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-rich-tde-movies")
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
-import dev
 import numpy as np
-import richio
 import richio.render as richrender
 import unyt as u
 from dev.datapaths import DATAPATHS, SNAPSHOT_TIMES, TDE_PARAMETERS
 
+import dev
+import richio
 
 REPO = Path("/home/hey4/rich_tde")
 OUTPUT_ROOT = REPO / "reports/movies/crete"

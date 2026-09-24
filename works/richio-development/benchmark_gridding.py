@@ -1,19 +1,94 @@
-"""Benchmark streamed projection timing and peak memory on a RICH snapshot.
+r"""Measure streamed projection runtime and peak memory for a RICH snapshot.
 
-This is intentionally not part of the test suite. Example::
+Each grid-resolution/worker-count pair runs in a fresh subprocess. The field
+is sampled on a cubic grid in stored X/Y/Z, integrated along z and converted
+to cgs. Stage timings and Linux peak resident memory quantify implementation
+cost. OS file-cache state affects timings; this is not a physical convergence
+test and is not part of the unit-test suite.
 
-    python works/richio-development/benchmark_gridding.py snap_0042.h5 \
-        --res 256 --res 512
-    python works/richio-development/benchmark_gridding.py snap_0042.h5 --res 1024 \
-        --workers 16 --z-spacing sinh --sinh-scale 0.1
+Input files
+-----------
+``snapshot`` (positional argument)
+    RICH HDF5 file or extracted NPY directory readable by ``richio.load``.
+    Requires X/Y/Z, the snapshot box and ``--field`` (default density).
+``--res``, ``--workers``, ``--z-spacing``, ``--sinh-scale``
+    ``--res`` may be repeated (default 256). Worker counts are a space-separated
+    list, default ``1 2 4 8 16 -1``; -1 uses all available query threads.
+    Line-of-sight spacing is linear or sinh; sinh requires a central scale in
+    RICH code lengths (solar-radius scale).
+
+Output files
+------------
+The script writes no files directly. Stdout contains one JSON object per
+completed pair; redirect it to a ``.jsonl`` file to retain the results. Each
+object has the following keys:
+
+``resolution``, ``workers``, ``cells``
+    Integers: grid samples per axis, requested query threads (-1 means all),
+    and cells used to build the tree.
+``z_spacing``, ``sinh_scale``
+    String ``"linear"`` or ``"sinh"``; numeric central scale in code lengths,
+    or JSON ``null`` when omitted.
+``field_loading_s``, ``grid_preparation_s``, ``tree_build_s``
+    Floating-point wall seconds for reading cell fields, preparing grid
+    coordinates and building the nearest-neighbour tree.
+``query_integration_s``, ``total_s``
+    Floating-point wall seconds for nearest-neighbour queries plus z
+    integration, and total worker time from snapshot loading through result
+    conversion (excluding parent/process-start overhead).
+``peak_rss_mib``
+    Floating-point peak resident memory of the worker in MiB (2**20 bytes).
+``checksum``, ``unit``
+    Floating-point sum of map values and their cgs unit string (density:
+    ``g/cm**2``). The internal map is ``float64 (resolution-1, resolution-1)``,
+    axes x then y; it is not saved. The checksum omits pixel area and is not
+    an area-integrated physical total. Values are linear, not logarithms.
+
+The JSONL has one record per completed case, not one rectangular NumPy array;
+load each line with ``json.loads``. Snapshot path and field name are not stored
+in the records, so retain the invocation with the file.
+
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` (replace the input path)::
+
+    mkdir -p data/processed/RichioDevelopment
+    python works/richio-development/benchmark_gridding.py /path/to/snap_21.h5 \
+        --res 64 --workers 1 4 > data/processed/RichioDevelopment/gridding.jsonl
+    python works/richio-development/benchmark_gridding.py /path/to/snap_21.h5 \
+        --res 128 --workers 4 --z-spacing sinh --sinh-scale 0.1
+
+Every rerun repeats every pair. Shell ``>`` replaces the specified JSONL file;
+there is no resume or append mode in the script. Importing does not benchmark.
+
+Loading examples
+----------------
+Read retained records and compare timing/memory across cases::
+
+    import json
+    import numpy as np
+
+    with open("data/processed/RichioDevelopment/gridding.jsonl") as stream:
+        records = [json.loads(line) for line in stream if line.strip()]
+    measurements = np.array([
+        [row["total_s"], row["peak_rss_mib"]] for row in records
+    ])  # float64 (N, 2): column 0=seconds, 1=MiB; N=completed pairs
+    print(measurements)
+    print([(row["resolution"], row["workers"]) for row in records])
 """
 
 import argparse
 import json
 import multiprocessing as mp
+import os
 import resource
 from pathlib import Path
 from time import perf_counter
+
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 import numpy as np
 import unyt as u

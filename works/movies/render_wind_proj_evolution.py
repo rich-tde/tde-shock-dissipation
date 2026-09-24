@@ -1,35 +1,84 @@
-"""Time-evolution movie of the unbound-wind density & dissipation projections.
+r"""Render three-plane density and dissipation projections of the outward wind.
 
-Reproduces the 3-plane column projections from
-``works/windstudy/0.1-tde-wind.ipynb`` for *every* snapshot and stitches the
-frames into a movie.  Each frame is a 2x3 panel:
+Only cells with positive Bernoulli and outward radial velocity contribute.
+Values outside the wind are set to zero while their cells remain in the
+nearest-neighbour grid, preventing wind values from being extended into the
+masked region. A shared grid produces xy/xz/yz column integrals. Each field
+uses fixed log10 colour limits from a reference snapshot (default final);
+inspect other epochs for clipping or supply ``--vmin``/``--vmax``.
 
-* **top row** density, **bottom row** dissipation;
-* **columns** are the xy / xz / yz projection planes.
+Input files
+-----------
+``RUN_DIR`` (positional argument)
+    Top-level or ``snap_<n>/`` HDF5 files named ``snap_<n>.h5`` or
+    ``snap_full_<n>.h5``, or extracted ``snap_<n>/`` NPY directories. Optional
+    ``tfb_<n>.txt`` files supply fallback-time labels. Snapshot selection uses
+    inclusive ``--start``/``--end`` and then ``--step``. Requires the selected
+    fields, coordinates, velocity, density, internal energy, pressure and
+    specific radiation energy for the Bernoulli mask.
+``--m-bh``, ``--m-star``, ``--r-star`` and box settings
+    Snapshots must already be in the BH frame. Default parameters are
+    1e4 solar masses, 0.5 solar masses and 0.47 solar radii; supply the correct
+    run values. ``--box``/``--box-half`` are code lengths (solar-radius scale).
+    Positive Bernoulli/outward velocity describe instantaneous motion, not
+    proof of eventual escape.
 
-Only the unbound, radially-outflowing wind is kept (``B>0 & v_r>0`` -- the
-notebook's ``wind_mask``).  Following the notebook this is a *value* mask: cells
-outside the wind have their field set to zero and still enter the column
-integral (so non-wind sight-lines read as empty), rather than a ``selection``
-mask, which would drop them from the nearest-neighbour grid and smear the wind
-across the box.
+Output files
+------------
+``--out`` (default ``wind_proj.mp4`` in the working directory)
+    H.264 movie in selected snapshot order at ``--fps`` (default 24).
+    ``imageio`` decodes each frame to ``uint8 (H, W, 3)``: row, column and
+    RGB channels in 0--255. Playback time is not physical simulation time.
+``<frames-dir>/frame_<index:05d>.png``
+    Default directory: ``<out-stem>_frames`` beside the movie. The index is
+    zero-based movie position, not snapshot number. PIL RGBA conversion gives
+    ``uint8 (H, W, 4)``, channel 3 alpha. The default canvas is 1870 by 880
+    pixels (17 by 8 inches at ``--dpi 110``). One row per ``--fields`` entry
+    (density then dissipation by default), columns xy/xz/yz. Horizontal/vertical
+    axes follow the plane letters; the remaining axis is integrated out.
+    Colourbars show log10 cgs values: density ``g/cm**2``, dissipation
+    ``erg/s/cm**2``. These are plotted colours; numerical maps are not saved.
 
-The rendering path is :meth:`richio.data.Snapshot.plots.projection` (matplotlib
-column integral), the same as the notebook -- *not* the yt off-axis projection
-used by ``render_evolution.py``.  Frames are split across forked workers
-(``--n-jobs``); the colour scale is fixed once from a reference snapshot so the
-colorbars don't flicker.
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` (replace the input path)::
 
-Example::
-
-    python render_wind_proj_evolution.py /data1/.../ComptonHiResNewAMR \
+    python works/movies/render_wind_proj_evolution.py /path/to/run \
         --start 21 --end 151 --box-half 200 --res 512 --n-jobs 6 \
-        --out reports/movies/wind_proj/wind_proj_wide.mp4
+        --out data/processed/Movies/wind_proj.mp4 --keep-frames
+
+Existing movies are skipped unless ``--overwrite`` is supplied. Interrupted
+or overwritten runs rerender all frames. ``--keep-frames`` retains PNGs after
+encoding; otherwise they are removed. Use a distinct output for changed
+selections/settings. ``--vmin``/``--vmax`` are comma-separated log10 cgs
+bounds aligned to ``--fields``; blank entries retain automatic bounds.
+
+Loading examples
+----------------
+Inspect the movie and one retained six-panel frame::
+
+    import imageio.v2 as imageio
+    import numpy as np
+    from pathlib import Path
+    from PIL import Image
+
+    root = Path("data/processed/Movies")
+    with imageio.get_reader(root / "wind_proj.mp4") as movie:
+        rgb = movie.get_data(0)  # (H, W, 3), uint8
+        print(movie.get_meta_data(), rgb.shape)
+    with Image.open(root / "wind_proj_frames/frame_00000.png") as image:
+        rgba = np.array(image.convert("RGBA"))  # normally (880, 1870, 4)
 """
 
 import argparse
 import os
 import sys
+from pathlib import Path
+
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 import numpy as np
 
@@ -71,9 +120,17 @@ def _masked_field(snap, field, mask):
     return arr
 
 
-def _wind_mask(snap, coords):
+def _wind_mask(snap, coords, m_bh=1e4, m_star=0.5, r_star=0.47):
     """Notebook ``wind_mask``: B>0 & v_r>0 (no cone / x-side cut)."""
-    return tde_frame.select_unbound_outflow(snap, zr_max=None, x_sign=0, coords=coords)
+    return tde_frame.select_unbound_outflow(
+        snap,
+        zr_max=None,
+        x_sign=0,
+        coords=coords,
+        m_bh=m_bh,
+        m_star=m_star,
+        r_star=r_star,
+    )
 
 
 def _project_all(snap, fields, mask, coords, box, res, tree_workers, unit_system="cgs"):
@@ -124,7 +181,18 @@ def _log_range(projected, lo_pct=1.0, hi_pct=99.5):
     return float(np.floor(lo * 2.0) / 2.0), float(np.ceil(hi * 2.0) / 2.0)
 
 
-def _fix_color_scale(ref_path, fields, coords, res, box, tree_workers, overrides):
+def _fix_color_scale(
+    ref_path,
+    fields,
+    coords,
+    res,
+    box,
+    tree_workers,
+    overrides,
+    m_bh=1e4,
+    m_star=0.5,
+    r_star=0.47,
+):
     """Per-field (vmin, vmax) in log10 space from the reference snapshot.
 
     Pools all three planes so one scale serves every panel/frame.  ``overrides``
@@ -137,7 +205,7 @@ def _fix_color_scale(ref_path, fields, coords, res, box, tree_workers, overrides
         return {f: overrides[f] for f in fields}
 
     snap = richio.load(ref_path)
-    mask = _wind_mask(snap, coords)
+    mask = _wind_mask(snap, coords, m_bh, m_star, r_star)
     panels = _project_all(snap, fields, mask, coords, box, res, tree_workers)
     scales = {}
     for field in fields:
@@ -171,7 +239,7 @@ def render_frame(args):
     scales = cfg["scales"]
 
     snap = richio.load(path)
-    mask = _wind_mask(snap, coords)
+    mask = _wind_mask(snap, coords, cfg["m_bh"], cfg["m_star"], cfg["r_star"])
     panels = _project_all(snap, fields, mask, coords, box, res, cfg["tree_workers"])
 
     fig, axes = plt.subplots(
@@ -230,6 +298,18 @@ def main(argv=None):
     )
     p.add_argument("--res", type=int, default=512)
     p.add_argument(
+        "--m-bh",
+        type=float,
+        default=1e4,
+        help="BH mass in solar masses for the Bernoulli mask.",
+    )
+    p.add_argument(
+        "--m-star", type=float, default=0.5, help="Stellar mass in solar masses."
+    )
+    p.add_argument(
+        "--r-star", type=float, default=0.47, help="Stellar radius in solar radii."
+    )
+    p.add_argument(
         "--box-half",
         type=float,
         default=200.0,
@@ -282,7 +362,16 @@ def main(argv=None):
     p.add_argument("--out", default="wind_proj.mp4")
     p.add_argument("--frames-dir", default=None)
     p.add_argument("--keep-frames", action="store_true")
+    p.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace an existing movie and rerender its frames.",
+    )
     args = p.parse_args(argv)
+
+    if Path(args.out).exists() and not args.overwrite:
+        print(f"Skipping existing {args.out}; use --overwrite to replace.", flush=True)
+        return 0
 
     os.environ.setdefault("MPLBACKEND", "Agg")
     os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -328,7 +417,10 @@ def main(argv=None):
     outdir = os.path.dirname(os.path.abspath(args.out))
     if outdir:
         os.makedirs(outdir, exist_ok=True)
-    frames_dir = args.frames_dir or os.path.abspath("wind_proj_frames")
+    output_path = Path(args.out).resolve()
+    frames_dir = args.frames_dir or str(
+        output_path.with_name(output_path.stem + "_frames")
+    )
     os.makedirs(frames_dir, exist_ok=True)
 
     ref_path = snaps[args.ref_index]
@@ -339,7 +431,16 @@ def main(argv=None):
     )
     print(f"[wind_proj] fixing colour scale from {ref_path}", flush=True)
     scales = _fix_color_scale(
-        ref_path, fields, coords, args.res, box, args.tree_workers, overrides
+        ref_path,
+        fields,
+        coords,
+        args.res,
+        box,
+        args.tree_workers,
+        overrides,
+        args.m_bh,
+        args.m_star,
+        args.r_star,
     )
     for f in fields:
         print(f"[wind_proj]   {f}: log10 vmin/vmax = {scales[f]}", flush=True)
@@ -347,6 +448,9 @@ def main(argv=None):
     _CFG.update(
         {
             "coords": coords,
+            "m_bh": args.m_bh,
+            "m_star": args.m_star,
+            "r_star": args.r_star,
             "box": box,
             "res": args.res,
             "fields": fields,

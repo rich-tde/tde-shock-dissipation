@@ -1,4 +1,201 @@
-"""Stage-3 restartable nozzle-cooling timeseries worker and aggregator."""
+"""Calculate restartable nozzle cooling maps and assemble their time series.
+
+Integrate a nearest-cell Cartesian grid along z inside spherical radius
+``r < 3 r_p``, after correcting moving-frame coordinates to the BH frame.
+Let ``Sigma = integral(rho dz)``, ``H = integral(rho |z| dz)/Sigma`` and
+``vzbar = integral(rho |vz| dz)/Sigma``. The times are emission
+``tc = integral(rho sie dz)/integral(alpha_P a_rad T**4 c dz)``, vertical flow
+``tv = H/vzbar``, diffusion ``tdiff = H tau_R/c``, and photon escape
+``tesc = H (1 + tau_R)/c``, with ``tau_R = integral(alpha_R dz)``.
+Here emission is gross thermal emission, not net radiative energy exchange.
+The ratio ``max(tc, tesc)/tv`` is a diagnostic, not evidence of a causal cooling
+change. The accepted wedge has projected radius ``0.6 <= R/r_p <= 1.75`` and
+angular half-width 4.5 degrees about the supplied/native-peak direction.
+Workers use linear x/y and sinh z sampling (scale ``0.1 r_p``), finding the native
+peak direction in ``0.6 <= r/r_p <= 1.75`` (inner radius 0.8 for ``1e6``).
+
+Input files
+-----------
+``--mode 1/2/3`` selects ``1e4/1e5/1e6``. ``dev.datapaths.DATAPATHS`` supplies
+ordered ``snap_full_<n>.h5`` or ``snap_<n>.h5`` paths with restart exclusions.
+A worker selects zero-based ``--snapshot-index`` (default 0), or exact
+``--snapshot-number``. Required ``richio`` fields are time, X/Y/Z, rho, T, vz, sie
+and dissipation. No prior direction cache is required. ``--action aggregate``
+requires a valid worker NPZ for every registered snapshot of all three runs.
+
+Output files
+------------
+Default ``--output-root`` is
+``data/processed/CoolingChecks/nozzle-timescale-series/production-sinh``.
+Workers write ``<output-root>/<run>/snap_<NNNN>_<Nx>x<Nx>x<Nz>_sinhz.npz``;
+default grid-point counts are ``Nx=256`` and ``Nz=512`` (``Ny=Nx``).
+
+Each map is a compressed NumPy ``.npz`` archive loaded with ``np.load``;
+there is no single rectangular table. ``Nx``, ``Ny``, ``Nz`` are grid-point
+counts. Maps have axis order ``(x, y)``, with z integrated out; plot ``map.T``
+against the one-dimensional x/y coordinates. Values are linear, not logarithms.
+Empty columns can yield NaN or infinity in divisions; mask non-finite values
+for statistics/plots. Zero integrated density/dissipation outside the aperture
+is retained. The keys written by the current calculation are:
+
+``run``, ``snapshot_path`` : Unicode arrays, shape ``()``
+    Mass label (``1e4``, ``1e5`` or ``1e6``) and source HDF5 path. Use ``.item()``
+    to retrieve a Python string.
+``snapnum`` : int64 array, shape ``()``
+    Source snapshot number.
+``resolution_x``, ``resolution_y``, ``resolution_z`` : int64 arrays, shape ``()``
+    ``Nx``, ``Ny``, ``Nz``; these describe the sampling grid, not native cells.
+``z_spacing`` : Unicode array, shape ``()``
+    ``linear`` or ``sinh``. The z integration uses ``Nz - 1`` left samples and
+    the differences between consecutive z coordinates.
+``sinh_scale_rp`` : float64 array, shape ``()``
+    Sinh scale divided by pericentre radius; NaN for linear spacing.
+``time_tfb``, ``time_days`` : float64 arrays, shape ``()``
+    Snapshot time divided by fallback time, and snapshot time in days.
+``x_rp``, ``y_rp`` : float64 arrays, shapes ``(Nx,)``, ``(Ny,)``
+    BH-frame x/y sampling coordinates divided by pericentre radius.
+``wedge_mask`` : bool array, shape ``(Nx, Ny)``
+    True for wedge pixels with positive integrated dissipation. The other maps
+    cover the full aperture; apply this mask when selecting nozzle statistics.
+``dissipation_column_erg_s_cm2`` : float64 array, shape ``(Nx, Ny)``
+    ``integral(dissipation dz)`` in erg/s/cm**2; this is power per projected
+    area, not pixel power. Multiply by pixel area in cm**2 before summing power.
+``sigma_g_cm2`` : float64 array, shape ``(Nx, Ny)``
+    Surface density ``Sigma`` in g/cm**2.
+``H_Rstar`` : float64 array, shape ``(Nx, Ny)``
+    Density-weighted absolute height ``H`` divided by stellar radius.
+``vzbar_cm_s`` : float64 array, shape ``(Nx, Ny)``
+    Density-weighted absolute vertical velocity in cm/s.
+``tau_R`` : float64 array, shape ``(Nx, Ny)``
+    Dimensionless Rosseland optical depth integrated through the aperture.
+``tc_tdyn``, ``tv_tdyn``, ``tdiff_tdyn``, ``tesc_tdyn`` : float64 arrays, shape ``(Nx, Ny)``
+    The four times defined above divided by stellar dynamical time
+    ``sqrt(R_star**3/(G M_star))``; all dimensionless.
+``tc_over_tv``, ``tdiff_over_tv``, ``tesc_over_tv`` : float64 arrays, shape ``(Nx, Ny)``
+    Emission, diffusion and escape time divided by vertical-flow time.
+``effective_over_tv`` : float64 array, shape ``(Nx, Ny)``
+    ``max(tc, tesc)/tv``, dimensionless.
+
+Previously produced caches may additionally contain ``resolution``, physical
+scales, direction metadata or dimensional time/height maps. These are optional
+legacy keys and are not written by the current calculation; the keys above are
+the current contract. Old cubic caches can use ``resolution`` instead of
+``resolution_x``, ``resolution_y``, ``resolution_z``, and omit z-spacing metadata.
+The cache reader treats those as linear cubic grids.
+
+A worker can instead write an unavailable-result NPZ for specifically handled
+empty-region errors. This smaller archive has only ``run``, ``snapshot_path``
+(Unicode scalars), ``snapnum`` (int64 scalar), ``time_tfb``, ``time_days``
+(float64 scalars, fallback units and days), ``status`` (Unicode scalar,
+``no_aperture_material``) and ``status_reason`` (Unicode scalar, error message).
+All have shape ``()``; no map or wedge is present. Check ``status`` before
+loading maps. Other calculation errors propagate rather than creating a marker.
+
+Aggregation replaces ``nozzle_timescale_series.csv`` and seven PNGs under
+``<output-root>``: ``figures/selection_quality.png`` plus
+``figures/timescales_<statistic>.png`` and ``figures/components_<statistic>.png``
+for the three statistics. PNGs are raster plots; load the CSV for numerical
+values. The headered CSV has three rows per registered snapshot. Column order
+is determined by first appearance, so use column names with ``csv.DictReader``.
+All CSV cells load as strings; convert numeric fields explicitly. Valid rows
+contain these summary fields:
+
+The helper creates one row for each
+``statistic``: ``median``, ``dissipation_weighted_mean`` and
+``max_dissipation_pixel``. The median ignores NaNs; the weighted mean does not
+filter NaNs or infinities. Weights are positive column dissipation in the wedge;
+the peak pixel is the largest column dissipation there. Each row has:
+
+``run``, ``z_spacing``, ``statistic`` : str
+    Mass label, vertical grid spacing and aggregation method.
+``snapnum``, ``resolution``, ``resolution_x``, ``resolution_y``, ``resolution_z`` : int
+    Snapshot and sampling-grid sizes; ``resolution`` repeats ``resolution_x``.
+``sinh_scale_rp``, ``time_tfb``, ``time_days`` : float
+    Same units/meaning as the NPZ scalar metadata; linear-grid sinh scale is NaN.
+``selected_pixels`` : int
+    Number of True wedge pixels.
+``captured_total_dissipation_fraction`` : float
+    Wedge dissipation sum divided by the sum over all positive map pixels.
+``max_dissipation_x_rp``, ``max_dissipation_y_rp`` : float
+    Coordinates of the maximum-dissipation wedge pixel in pericentre units.
+``sigma_g_cm2``, ``H_Rstar``, ``vzbar_cm_s``, ``tau_R`` : float
+    Statistic of each map, in g/cm**2, stellar radii, cm/s and dimensionless
+    optical depth, respectively.
+``tc_tdyn``, ``tv_tdyn``, ``tdiff_tdyn``, ``tesc_tdyn`` : float
+    Statistic of each dimensionless time map.
+``tc_over_tv``, ``tdiff_over_tv``, ``tesc_over_tv``, ``effective_over_tv`` : float
+    Statistic of each dimensionless ratio map. These are statistics of ratios,
+    not ratios computed from separately aggregated times.
+
+Additional CSV fields are:
+
+``status``, ``status_reason``, ``snapshot_path`` : str
+    Valid rows use ``ok``, empty reason and empty source path (read the path from
+    their NPZ). Unavailable rows contain the marker status/reason/source path;
+    their physical/grid/statistic-result fields are empty, not zeros.
+``epoch_class`` : str
+    ``unavailable`` if tau_R or tesc/tv is non-finite; otherwise
+    ``optically_thin`` for tau_R < 1, ``optically_thick_escape_efficient`` for
+    tau_R >= 1 and tesc/tv < 1, or ``photon_trapped`` for the remaining rows.
+``emission_limited``, ``effectively_cooled`` : bool serialized as text, or empty
+    ``True``/``False`` for tc/tv >= 1 and max(tc,tesc)/tv < 1 respectively;
+    empty when the relevant ratio is non-finite. These are timescale labels.
+
+Floating fields may contain ``nan`` or ``inf``; missing fields are empty CSV
+cells. Older aggregate files may include extra fields, but those are not written
+by the current aggregator.
+
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` in the richanalysis environment::
+
+    python works/cooling-checks/nozzle-timescale-series.py --action worker --mode 1 --snapshot-number 108
+    python works/cooling-checks/nozzle-timescale-series.py --action aggregate
+
+Workers reuse accepted caches unless ``--overwrite``. Normal cache checks test
+fields/grid shape, not source changes; unavailable markers are checked by
+run/snapshot/status only. Aggregate rejects missing, invalid or unexpected NPZ
+files. Keep experiments in separate output roots. The full production sequence
+uses ``jobs/submit-nozzle-timescale-series-1e4.sh`` (and ``-1e5.sh``, ``-1e6.sh``),
+then the aggregate job. A production snapshot can take substantial time/memory.
+The deprecated ``--percentile`` option is ignored: the wedge is always used.
+
+Loading examples
+----------------
+Inspect the result type, then select the finite wedge values::
+
+    from pathlib import Path
+    import numpy as np
+
+    root = Path("data/processed/CoolingChecks/nozzle-timescale-series/production-sinh")
+    with np.load(root / "1e4/snap_0108_256x256x512_sinhz.npz") as data:
+        if "status" in data:
+            print(data["status"].item(), data["status_reason"].item())
+        else:
+            ratio = data["effective_over_tv"]
+            selected = data["wedge_mask"] & np.isfinite(ratio)
+            print(data["time_tfb"].item(), np.median(ratio[selected]))
+            # Maps have (x,y) order: pcolormesh(x_rp, y_rp, ratio.T).
+
+Load one physical time series from the CSV, ignoring unavailable/undefined rows::
+
+    import csv
+    import dev
+    import matplotlib.pyplot as plt
+
+    with (root / "nozzle_timescale_series.csv").open(newline="") as stream:
+        rows = [row for row in csv.DictReader(stream)
+                if row["run"] == "1e4" and row["statistic"] == "median"
+                and row["status"] == "ok"]
+    rows.sort(key=lambda row: float(row["time_tfb"]))
+    time = np.array([float(row["time_tfb"]) for row in rows])
+    ratio = np.array([float(row["effective_over_tv"]) for row in rows])
+    finite = np.isfinite(ratio)
+    fig, ax = plt.subplots()
+    ax.plot(time[finite], ratio[finite])
+    ax.set(xlabel="t/t_fb", ylabel="median max(tc,tesc)/tv")
+    plt.show()
+"""
 
 from __future__ import annotations
 
@@ -6,10 +203,14 @@ import csv
 import os
 from pathlib import Path
 
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache" / "matplotlib")
+)
+
 os.environ.setdefault("MPLBACKEND", "Agg")
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-nozzle-series")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
+import dev  # noqa: F401  # isort: skip  # Configure style before pyplot.
 import matplotlib.pyplot as plt
 import nozzle_timescales as VALIDATION
 import numpy as np
@@ -338,8 +539,13 @@ def run_aggregate(output_root: Path, resolution: int, resolution_z: int) -> None
 
 def main(
     action: str = typer.Option("worker", help="worker or aggregate"),
-    mode: int = typer.Option(1, min=1, max=3),
-    snapshot_index: int = typer.Option(0, min=0),
+    mode: int = typer.Option(1, min=1, max=3, help="Worker run: 1=1e4, 2=1e5, 3=1e6"),
+    snapshot_index: int = typer.Option(
+        0, min=0, help="Zero-based index in DATAPATHS order"
+    ),
+    snapshot_number: int | None = typer.Option(
+        None, help="Exact snapshot number, overriding index"
+    ),
     percentile: float | None = typer.Option(
         None, help="Deprecated compatibility option; wedge selection is used"
     ),
@@ -351,12 +557,16 @@ def main(
     ),
     overwrite: bool = typer.Option(False),
 ) -> None:
+    """Compute one cached map, or aggregate all registered snapshots of all runs."""
     if percentile is not None:
         logger.warning(
             "Ignoring --percentile={} because Stage 3 uses the accepted wedge",
             percentile,
         )
     if action == "worker":
+        if snapshot_number is not None:
+            numbers, _ = DATAPATHS(RUN_BY_MODE[mode])
+            snapshot_index = numbers.index(snapshot_number)
         run_worker(
             mode,
             snapshot_index,

@@ -15,6 +15,7 @@
 set -euo pipefail
 
 /home/hey4/.conda/envs/richanalysis/bin/python \
-    /home/hey4/rich_tde/works/shock-tde/Ediss-t-four-regions.py \
+    /home/hey4/rich_tde/works/shock-tde/Ediss-t.py \
     --mode "${SLURM_ARRAY_TASK_ID}" \
+    --regions nozzle-split \
     --npoints 10

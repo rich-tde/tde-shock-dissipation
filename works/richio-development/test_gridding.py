@@ -1,12 +1,74 @@
+r"""Check richio gridding and projection against small in-memory reference cases.
+
+The unittest suite compares nearest-neighbour gridding, streamed integration,
+thread/slab consistency, spacing rules, units and plot-worker forwarding.
+These controlled cases verify implementation; use
+``sinh-projection-convergence.py`` for snapshot-specific accuracy and
+``benchmark_gridding.py`` for runtime/memory studies.
+
+Input files
+-----------
+No simulation files are read. ``ArraySnapshot`` creates 343 synthetic cells
+on a 7 by 7 by 7 Cartesian lattice. X/Y/Z are ``float64 (343,)`` arrays in cm;
+density is a known linear function in ``g/cm**3``, volume is ``cm**3`` and
+the box is ``[-1,-1,-1,1,1,1] cm``. Some tests mock the plotting interface.
+
+Output files
+------------
+No files or figures are written. ``unittest`` reports test names, pass/fail
+counts and tracebacks to stderr; exit status is nonzero on failure.
+``ArraySnapshot`` can also be imported for an in-memory numerical example:
+``snap.project("density", res=8)`` returns a tuple of three unitful arrays:
+
+``projected``
+    ``float64 (7, 7)`` density integral in ``g/cm**2``, axes x then y.
+``xspace``, ``yspace``
+    ``float64 (8,)`` coordinate arrays in cm defining the corresponding
+    integration-map intervals. For an image, transpose ``projected`` and use
+    ``origin="lower"`` so x is horizontal and y vertical.
+
+Usage
+-----
+Run the suite from ``/home/hey4/rich_tde`` with the richanalysis environment::
+
+    python works/richio-development/test_gridding.py -v
+
+Every invocation repeats the checks; there is no stored output to resume.
+Importing defines helpers/test cases but does not execute the test suite.
+
+Loading examples
+----------------
+No output file needs loading. Inspect a synthetic projection in a Python
+session from the repository root::
+
+    import importlib.util
+    from pathlib import Path
+
+    path = Path("works/richio-development/test_gridding.py")
+    spec = importlib.util.spec_from_file_location("gridding_checks", path)
+    checks = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checks)
+    snap = checks.ArraySnapshot()
+    projected, xspace, yspace = snap.project("density", res=8, workers=1)
+    print(projected.shape, projected.units)  # (7, 7), g/cm**2
+    values = projected.to_value("g/cm**2")  # float64 (7, 7), x/y axis order
+"""
+
+import os
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
-import numpy as np
-from scipy.spatial import KDTree
-import unyt as u
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
+os.environ.setdefault("MPLBACKEND", "Agg")
 
+import numpy as np
+import unyt as u
 from richio.data import Snapshot, _iter_3d_nearest_slabs
 from richio.plots import SnapshotPlotter
+from scipy.spatial import KDTree
 
 
 class ArraySnapshot(Snapshot):

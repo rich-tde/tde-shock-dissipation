@@ -1,18 +1,122 @@
-"""Measure nozzle-dissipation proxies in every snapshot of the three TDE runs.
+"""Compare nozzle internal energy and dissipation-based kinetic-energy fractions.
 
-This is the batch version of ``works/shocktubes/0.1-nozzle-dissipation-check.ipynb``.
-For every snapshot it applies the notebook's current default selection in the
-BH-centred frame: first require the stellar tracer to exceed 0.99, find the
-maximum-dissipation-density cell within that material, keep cells within +/-4.5
-degrees of its longitude, and require r < 1100 Schwarzschild radii.
+Transform positions and velocities to the BH frame; retain ``star>0.99``
+by default; find the maximum volumetric-dissipation cell in that material;
+select a longitude wedge within +/-4.5 degrees of it and ``r<1100 R_s``.
+On that shared selection calculate ``Eint/Ekin``, ``P_diss*t_cross/Ekin``,
+and a proxy replacing the selected mass-mean kinetic energy with that at
+the maximum-dissipation cell, where ``t_cross=r_p/v_esc,p``. Thresholds are
+CLI options. This wedge need not isolate a nozzle shock at every epoch.
+Accumulated internal energy differs from instantaneous heating; none of
+these ratios alone measures radiative energy loss.
 
-Two dimensionless diagnostics are evaluated on that one shared selection:
+Input files
+-----------
+Raw snapshot HDF5 files selected by ``dev.datapaths.DATAPATHS`` for mode
+``1=1e4``, ``2=1e5``, ``3=1e6`` solar-mass BH runs. Exact directories and
+restart exclusions are in ``dev/dev/datapaths.py``. ``--snapshot-index`` is
+a zero-based position in the catalogue, not a snapshot number. Alternatively,
+``--snapshot-file`` selects one explicit ``snap_N.h5`` or ``snap_full_N.h5``
+from the chosen run; filename/parent directory determine frame correction.
+Required fields read through ``richio.load``: positions, velocities, density,
+volume, specific internal energy, volumetric dissipation, stellar tracer and
+time. If no cells exceed ``--star-min``, the calculation raises an error.
 
-* total internal energy / total kinetic energy;
-* (total dissipation power / total kinetic energy) * (r_p / v_esc,p);
-* the notebook's local-velocity proxy for the same rate-based quantity.
+Output files
+------------
+``RUN/nozzle_dissipation_snap_NNNN.npz`` under
+``/home/hey4/rich_tde/data/processed/NozzleDissipationComparison/``
+``max-dissipation-nozzle-star-0.99/`` (override with ``--output-root``).
+``NNNN`` is the zero-padded snapshot number. Each compressed NumPy archive
+contains scalar arrays only: every key has shape ``()``, not ``(1,)`` or a
+row in a rectangular table. Load with ``np.load`` and extract with ``.item()``.
+All numbers are linear, not logarithmic. Every saved key is listed below.
 
-One compressed result is written per snapshot so the study can be restarted.
+``run``, ``snap_path`` : Unicode
+    Run label and original HDF5 snapshot path.
+``snapnum``, ``n_cells``, ``n_kept``, ``n_nozzle`` : int64
+    Snapshot number; original cell count; cells passing the stellar tracer
+    cut; cells in the final nozzle wedge, respectively.
+``frame_switched``, ``selection_valid`` : bool
+    Whether the BH-frame correction was applied; whether the wedge contains
+    at least one cell. Validity records nonemptiness, not physical proof of
+    nozzle-shock identification.
+``time_code``, ``time_tfb`` : float64
+    Snapshot time in code units (1603 s per unit), and time/fallback time.
+``star_min`` : float64
+    Dimensionless strict stellar-tracer threshold (default 0.99).
+``selection_center_rad``, ``selection_center_deg`` : float64
+    Azimuth of the maximum volumetric-dissipation cell in radians/degrees.
+``angular_half_width_deg`` : float64
+    Longitude-wedge half-width in degrees (strict angular cut).
+``maximum_dissipation_radius_rs``, ``radial_limit_rs`` : float64
+    Maximum-dissipation cell radius and wedge outer cutoff, divided by
+    Schwarzschild radius ``R_s``. The radial cut is strict.
+``schwarzschild_radius_cm``, ``r_p_cm`` : float64
+    Schwarzschild radius and nominal pericentre radius in cm.
+``v_esc_cm_s``, ``crossing_time_s`` : float64
+    Escape speed at pericentre [cm/s] and ``r_p/v_esc,p`` [s].
+``nozzle_mass_g`` : float64
+    Total selected wedge mass [g].
+``nozzle_kinetic_erg``, ``nozzle_internal_erg`` : float64
+    Selected BH-frame kinetic energy and internal energy [erg].
+``nozzle_dissipation_power_erg_s`` : float64
+    Sum of volumetric dissipation times cell volume in the wedge [erg/s].
+``nozzle_internal_over_kinetic`` : float64
+    Dimensionless ``Eint/Ekin`` for the selected wedge.
+``nozzle_rate_fraction_summed_kinetic`` : float64
+    Dimensionless ``P_diss*t_cross/Ekin`` for the selected wedge.
+``nozzle_rate_fraction_local_velocity`` : float64
+    Dimensionless ``(P_diss*t_cross/M_wedge)/(0.5*v_peak**2)``. The speed
+    is at the maximum-dissipation cell, which need not lie inside the wedge
+    if that peak fails the radial cut.
+``nozzle_mass_fraction``, ``nozzle_kinetic_fraction`` : float64
+    Wedge mass/kinetic energy divided by that of all cells passing the
+    stellar cut, respectively. Both are dimensionless.
+
+For an empty wedge, ``selection_valid=False``; mass, energies, power and
+fractions are zero, while the three energy-ratio diagnostics are NaN.
+Nonempty selections have no further finite-value mask; a zero denominator
+can also produce nonfinite ratios. No per-cell masks/arrays are saved.
+Older ``NozzleDissipationComparison/RUN/`` outputs use a different ``beam_*``
+schema and should not be confused with this default subdirectory.
+
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` with the richanalysis Python environment::
+
+    python works/shock-tde/nozzle-dissipation-all.py --mode 1
+    python works/shock-tde/nozzle-dissipation-all.py --mode 1 --snapshot-index 0
+    python works/shock-tde/nozzle-dissipation-all.py --mode 1 --angular-half-width-deg 6 --radial-limit-rs 900 --output-root data/processed/NozzleDissipationComparison/wide-wedge
+
+Matching existing source/selection outputs are skipped. Incompatible files
+require ``--overwrite`` or another ``--output-root``. Each snapshot is saved
+atomically beside its destination, so interrupted runs resume independently.
+The directory name of a custom root does not select parameters; set the
+corresponding CLI options explicitly.
+
+Loading examples
+----------------
+Read the first result and recover the dissipation fraction from saved sums::
+
+    from pathlib import Path
+    import numpy as np
+
+    root = Path("data/processed/NozzleDissipationComparison")
+    root = root / "max-dissipation-nozzle-star-0.99/1e4"
+    path = sorted(root.glob("nozzle_dissipation_snap_*.npz"))[0]
+    with np.load(path) as data:
+        valid = data["selection_valid"].item()
+        kinetic = data["nozzle_kinetic_erg"].item()
+        power = data["nozzle_dissipation_power_erg_s"].item()
+        crossing_time = data["crossing_time_s"].item()
+        saved_fraction = data["nozzle_rate_fraction_summed_kinetic"].item()
+        time_tfb = data["time_tfb"].item()
+    if valid and kinetic > 0:
+        fraction = power * crossing_time / kinetic
+        print(time_tfb, fraction, saved_fraction)  # Dimensionless values.
+    else:
+        print("Empty wedge or zero kinetic energy; inspect another snapshot.")
 """
 
 from __future__ import annotations
@@ -27,10 +131,14 @@ import typer
 import unyt as u
 from loguru import logger
 
-import dev
-import richio
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
+
 from dev.datapaths import DATAPATHS, TDE_PARAMETERS
 
+import dev
+import richio
 
 app = typer.Typer(add_completion=False)
 OUTPUT_ROOT = Path(
@@ -169,7 +277,14 @@ def sums_and_ratios(
     }
 
 
-def analyse_snapshot(run: str, snapnum: int, snapshot_path: Path):
+def analyse_snapshot(
+    run: str,
+    snapnum: int,
+    snapshot_path: Path,
+    star_min=STAR_MIN,
+    angular_half_width_deg=ANGULAR_HALF_WIDTH_DEG,
+    radial_limit_rs=RADIAL_LIMIT_RS,
+):
     """Load and analyse one snapshot, returning scalar output columns."""
 
     scales = run_scales(run)
@@ -189,9 +304,9 @@ def analyse_snapshot(run: str, snapnum: int, snapshot_path: Path):
         snap, run, snapshot_path, scales
     )
 
-    keep = np.asarray(snap.star > STAR_MIN, dtype=bool)
+    keep = np.asarray(snap.star > star_min, dtype=bool)
     if not np.any(keep):
-        raise ValueError(f"No cells have star tracer > {STAR_MIN} in {snapshot_path}")
+        raise ValueError(f"No cells have star tracer > {star_min} in {snapshot_path}")
     cell_mass = (snap.density * snap.volume)[keep]
     speed_squared = vx[keep] ** 2 + vy[keep] ** 2 + vz[keep] ** 2
     kinetic_energy = 0.5 * cell_mass * speed_squared
@@ -206,6 +321,8 @@ def analyse_snapshot(run: str, snapnum: int, snapshot_path: Path):
         azimuth,
         dissipation_density,
         schwarzschild_radius,
+        maximum_radius_rs=radial_limit_rs,
+        angular_half_width_deg=angular_half_width_deg,
     )
     selection_valid = bool(np.any(nozzle_selection))
     if selection_valid:
@@ -246,7 +363,7 @@ def analyse_snapshot(run: str, snapnum: int, snapshot_path: Path):
         "time_tfb": float((time / fallback_time).to_value("dimensionless")),
         "frame_switched": frame_switched,
         "n_cells": len(snap),
-        "star_min": STAR_MIN,
+        "star_min": star_min,
         "n_kept": int(keep.sum()),
         "n_nozzle": int(nozzle_selection.sum()),
         "selection_valid": selection_valid,
@@ -255,8 +372,8 @@ def analyse_snapshot(run: str, snapnum: int, snapshot_path: Path):
         "maximum_dissipation_radius_rs": float(
             (radius[maximum_index] / schwarzschild_radius).to_value("dimensionless")
         ),
-        "angular_half_width_deg": ANGULAR_HALF_WIDTH_DEG,
-        "radial_limit_rs": RADIAL_LIMIT_RS,
+        "angular_half_width_deg": angular_half_width_deg,
+        "radial_limit_rs": radial_limit_rs,
         "schwarzschild_radius_cm": float(schwarzschild_radius.to_value("cm")),
         "r_p_cm": float(pericenter_radius.to_value("cm")),
         "v_esc_cm_s": float(escape_speed.to_value("cm/s")),
@@ -302,6 +419,27 @@ def main(
         min=0,
         help="Process only this zero-based snapshot position (default: all in run).",
     ),
+    snapshot_file: Path | None = typer.Option(
+        None,
+        exists=True,
+        dir_okay=False,
+        help="One explicit snapshot from this mode; cannot combine with --snapshot-index.",
+    ),
+    star_min: float = typer.Option(
+        STAR_MIN,
+        min=0,
+        max=1,
+        help="Require stellar tracer strictly above this threshold.",
+    ),
+    angular_half_width_deg: float = typer.Option(
+        ANGULAR_HALF_WIDTH_DEG,
+        min=0,
+        max=180,
+        help="Longitude wedge half-width in degrees.",
+    ),
+    radial_limit_rs: float = typer.Option(
+        RADIAL_LIMIT_RS, min=0, help="Outer wedge radius in Schwarzschild radii."
+    ),
     output_root: Path = typer.Option(
         OUTPUT_ROOT, help="Root directory for per-run result files."
     ),
@@ -312,7 +450,19 @@ def main(
     """Process all snapshots in one run, skipping completed outputs by default."""
 
     run = RUN_BY_MODE[mode]
-    snapnums, paths = DATAPATHS(run)
+    if snapshot_file is not None:
+        if snapshot_index is not None:
+            raise typer.BadParameter(
+                "Use --snapshot-file or --snapshot-index, not both"
+            )
+        match = re.fullmatch(r"snap_(?:full_)?(\d+)\.h5", snapshot_file.name)
+        if match is None:
+            raise typer.BadParameter(
+                "--snapshot-file must be snap_<n>.h5 or snap_full_<n>.h5"
+            )
+        snapnums, paths = [int(match.group(1))], [snapshot_file.resolve()]
+    else:
+        snapnums, paths = DATAPATHS(run)
     items = list(zip(snapnums, paths))
     if snapshot_index is not None:
         if snapshot_index >= len(items):
@@ -326,12 +476,33 @@ def main(
     for position, (snapnum, snapshot_path) in enumerate(items, start=1):
         output_path = output_dir / f"nozzle_dissipation_snap_{snapnum:04d}.npz"
         if output_path.exists() and not overwrite:
+            with np.load(output_path) as cached:
+                compatible = (
+                    cached["run"].item() == run
+                    and Path(cached["snap_path"].item()).resolve()
+                    == Path(snapshot_path).resolve()
+                    and float(cached["star_min"]) == star_min
+                    and float(cached["angular_half_width_deg"])
+                    == angular_half_width_deg
+                    and float(cached["radial_limit_rs"]) == radial_limit_rs
+                )
+            if not compatible:
+                raise ValueError(
+                    f"{output_path} has different input/selection settings; use --overwrite or another --output-root"
+                )
             logger.info(f"Skipping existing {output_path}")
             continue
         logger.info(
             f"[{position}/{len(items)}] {run} snapshot {snapnum}: {snapshot_path}"
         )
-        output = analyse_snapshot(run, snapnum, snapshot_path)
+        output = analyse_snapshot(
+            run,
+            snapnum,
+            snapshot_path,
+            star_min,
+            angular_half_width_deg,
+            radial_limit_rs,
+        )
         save_result(output, output_path)
         logger.info(
             "Saved {}: Eint/Ekin={:.4e}, rate-summed-KE={:.4e}, "

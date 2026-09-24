@@ -1,41 +1,103 @@
 #!/usr/bin/env python3
-"""Shared-index, multi-field time-evolution projection movies.
+r"""Render multi-field time-evolution projections with one geometry grid per snapshot.
 
-A multi-field generalisation of :func:`richio.render.evolution_movie`.  The
-nearest-neighbour index map that resamples the unstructured cells onto the
-uniform grid is **geometry only** (it depends on cell positions, not field
-values), so this driver builds it **once per snapshot** and projects *every*
-requested field from it.  The single-threaded k-d-tree build is the dominant
-per-frame cost, so sharing it across fields cuts the work by ~``len(fields)``
-versus running one ``render_evolution.py`` job per field.
+A nearest-neighbour index map is shared by the selected fields; one field cube
+is materialized at a time. Density/dissipation are line integrals; temperature
+and normalized Bernoulli are density-weighted means by default. Automatic
+colour limits use the final snapshot. Use ``scan_color_range.py`` and explicit
+limits to assess clipping across epochs. A line integral is not an emission
+or radiative-transfer model.
 
-Memory is kept bounded by materialising **one field cube at a time** (the index
-map plus a single cube, ~17 GB at res 1024) instead of all cubes at once, so a
-node can still run ``--n-jobs 2`` for unweighted fields.
+Input files
+-----------
+``RUN_DIR`` (positional argument)
+    Top-level or ``snap_<n>/`` HDF5 files named ``snap_<n>.h5`` or
+    ``snap_full_<n>.h5``, or extracted ``snap_<n>/`` NPY directories. Optional
+    ``tfb_<n>.txt`` files supply fallback-time annotations. ``--start`` and
+    ``--end`` are inclusive snapshot numbers; ``--step`` subsamples their list.
+``--fields`` and physical settings
+    Comma-separated fields from density, dissipation, temperature and
+    bernoulli. Requires coordinate fields (default ``CMx,CMy,CMz``) and the
+    selected stored fields; Bernoulli additionally uses velocity, internal
+    energy, pressure, density and specific radiation energy. Fixed A/B/C
+    bounds are in code lengths (solar-radius scale), not mass-scaled.
+    ``--bh-frame`` requires the run's actual ``--switch-snap`` and orbital
+    parameters. ``--select wind`` zeroes values outside the instantaneous
+    positive-Bernoulli/outward-velocity/wedge selection.
 
-One movie is written per field: ``<outdir>/<tag>_<field>.mp4``.
+Output files
+------------
+``<outdir>/<name-template>.mp4``
+    One H.264 video per field. Defaults: ``outdir=reports/movies/angles``,
+    ``tag=g3_side``, ``name-template={tag}_{field}``. A decoded frame is
+    ``uint8 (H, W, 3)``: row, column, RGB channels in 0--255. ``--fps`` sets
+    playback rate. Frames follow snapshot order, followed by optional spin
+    frames of the final snapshot.
+``<frames-root>/<field>/frame_<index:05d>.png``
+    Default root is ``<outdir>/<tag>_frames``. The index is zero-based movie
+    position. PIL conversion gives ``uint8 (H, W, 4)`` RGBA, alpha at channel 3.
+    ``--resolution`` controls image sampling, with extra width for the colourbar
+    and possible even-pixel rounding during encoding. Screen coordinates depend
+    on the selected camera and ``--flip-x``. No numerical map is saved.
+    Density: logarithmic ``g/cm**2``; dissipation: logarithmic
+    ``erg/s/cm**2``; temperature: logarithmic ``K``; Bernoulli: symlog,
+    dimensionless ``B/Delta_epsilon`` where
+    ``Delta_epsilon = G M_BH R_* / R_t**2``. These are colourbar quantities,
+    not the image-channel values. ``--vmins``/``--vmaxs`` use linear physical
+    values, ordered as ``--fields`` even when the display norm is logarithmic.
 
-Example (the conference batch: g3 side view, density+dissipation, box A)::
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` (replace the input path)::
 
-    python render_evolution_multi.py /data1/.../ComptonHiResNewAMR \
+    python works/movies/render_evolution_multi.py /path/to/run \
         --fields density,dissipation --box A --azimuth 0 --elevation 15 \
         --res 1024 --resolution 1024 --bh-frame --flip-x --scalebar \
-        --vmins -, --vmaxs -,  --n-jobs 2 --workers 24 \
-        --outdir reports/movies/angles --tag g3_side
+        --n-jobs 2 --workers 24 --keep-frames \
+        --outdir data/processed/Movies/angles --tag g3_side
+
+Nonempty evolution frames are reused; a view with a missing field frame is
+rerendered for all its fields. Keep inputs, field order and settings unchanged
+on resume; select a new tag/frame root for another case. ``--frame-start`` and
+``--frame-stop`` are zero-based global positions (stop exclusive), including
+trailing spin frames. ``--no-encode`` keeps PNGs; ``--encode-only`` rebuilds
+movies from them. Encoding replaces movies, and ``--keep-frames`` preserves
+PNGs afterward.
+
+Loading examples
+----------------
+Inspect the density movie and retained first PNG::
+
+    import imageio.v2 as imageio
+    import numpy as np
+    from pathlib import Path
+    from PIL import Image
+
+    root = Path("data/processed/Movies/angles")
+    with imageio.get_reader(root / "g3_side_density.mp4") as movie:
+        rgb = movie.get_data(0)  # (H, W, 3), uint8 display colours
+        print(movie.get_meta_data(), rgb.shape)
+    path = root / "g3_side_frames/density/frame_00000.png"
+    with Image.open(path) as image:
+        rgba = np.array(image.convert("RGBA"))  # (H, W, 4), uint8
 """
 
 import argparse
 import functools
 import os
 import sys
+from pathlib import Path
 
-import numpy as np
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 # scripts/ is on sys.path[0]; reuse the existing single-field driver's helpers.
 import movie_zoom  # pencil_box, camera_zoom_for, beam_selection
+import numpy as np
 import render_evolution  # BOX_PRESETS, find_snapshots, _scalebar_for_box
 import tde_frame  # make_bh_frame_loader, select_unbound_outflow
-
 
 # Per-field rendering recipe (matches jobs/render_evolution_v2.slurm's case block):
 # cmap, colour norm, projection weight field, symlog linear threshold.
@@ -106,8 +168,8 @@ def _field_grid(
     the k-d tree can't smear selected values into the emptied space — the same
     rule as :func:`richio.render.evolution._build_grid`.
     """
-    from richio.render.grid import UniformGrid
     from richio.render.derived import DERIVED_FIELDS
+    from richio.render.grid import UniformGrid
 
     def _source(name):
         if name in DERIVED_FIELDS:
@@ -197,6 +259,7 @@ def _render_evolution_frame(task):
     after a walltime kill continues instead of redoing finished frames.
     """
     from richio.render.evolution import _evolution_label
+
     import richio
 
     idx, path = task
@@ -253,6 +316,7 @@ def _render_spin(final_path, n_evo, cfg, k_lo=0, k_hi=None):
     """
     from richio.render import volume_image
     from richio.render.evolution import _evolution_label
+
     import richio
 
     if k_hi is None:
@@ -578,8 +642,7 @@ def main(argv=None):
         )
 
     os.makedirs(args.outdir, exist_ok=True)
-    jid = os.environ.get("SLURM_JOB_ID", "local")
-    frames_root = args.frames_root or os.path.abspath(f"/tmp/{args.tag}_{jid}")
+    frames_root = args.frames_root or str(Path(args.outdir) / f"{args.tag}_frames")
 
     views = [
         _make_view(

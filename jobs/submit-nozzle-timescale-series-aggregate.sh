@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-export MPLCONFIGDIR="/tmp/matplotlib-${USER}-${SLURM_JOB_ID}"
+export MPLCONFIGDIR="/home/hey4/rich_tde/.cache/matplotlib"
 export OMP_NUM_THREADS=1
 
 cd /home/hey4/rich_tde

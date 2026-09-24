@@ -1,25 +1,90 @@
 #!/usr/bin/env python3
-"""Study the Rosseland optical-depth (tau = int alpha_ross dr) value distribution
-to choose a FIXED colorbar range for the movie.
+r"""Choose a fixed Rosseland optical-depth colour range from sampled snapshots.
 
-Per-frame auto-scaling makes the colorbar flicker across a movie, so we want one
-fixed ``[vmin, vmax]`` per ``(box, camera)`` that neither clips the bright disk
-nor washes out the diffuse envelope over the whole time evolution.  This scans a
-handful of snapshots spanning the run, projects tau for each ``(box, camera)``
-exactly as the movie does (shared index map from ``render_evolution_multi``, the
-opacity grid from ``render_rosseland_movie._opacity_grid``, and
-``richio.render.yt_backend._make_projection`` with ``weight=None``), and reports
-the pooled percentile distribution of the positive tau pixels.
+Compute ``tau = integral(alpha_ross dl)`` with the same opacity/grid/projection
+path as ``render_rosseland_movie.py``. Pool finite positive image pixels from
+selected snapshots, then report percentiles and bounds rounded outward to
+1/2/5 times powers of ten. Every sampled image pixel has equal weight; zeros
+are excluded. This chooses a display scale, not a radiative-escape criterion
+or convergence result, and unsampled epochs may exceed the range.
 
-Output: a JSON dump plus a printed table of percentiles and a recommended fixed
-log range per ``(box, camera)`` (a low percentile for vmin, a high one for vmax,
-rounded to clean 1/2/5 x 10^k decades).
+Input files
+-----------
+``RUN_DIR`` (positional argument)
+    Top-level or ``snap_<n>/`` HDF5 files named ``snap_<n>.h5`` or
+    ``snap_full_<n>.h5``, or extracted ``snap_<n>/`` NPY directories. Requires
+    density, temperature and coordinates (default ``CMx,CMy,CMz``). Default
+    ``--snaps`` is ``21,40,60,80,100,120,140,151``; missing snapshots are skipped.
+    BH-frame correction is always enabled before ``--switch-snap`` with the
+    supplied stellar/orbital parameters, which must match the run.
+``/home/hey4/RICH/data/STA/{T,rho,ross,scatter}.txt``
+    Opacity tables used by ``scripts/opacity_interpolator.py`` to convert
+    temperature and density into the Rosseland extinction coefficient.
+    ``--boxes`` defaults to A,B and ``--cameras`` to faceon,side.
 
-Example::
+Output files
+------------
+``--out`` (default ``reports/movies/rosseland/tau_range.json``)
+    JSON object loaded with ``json.load``. Top-level keys are:
 
-    python scan_rosseland_range.py /data1/.../ComptonHiResNewAMR \
+    ``snaps``
+        List of requested integer snapshot numbers, including skipped ones.
+    ``res``, ``resolution``
+        Integers: 3-D samples per axis and projected-image side in pixels.
+    ``pmin``, ``pmax``
+        Floating-point percentile ranks for the recommended lower/upper
+        bounds (default 25 and 99.5; ranks run from 0 to 100).
+    ``percentiles``
+        List of 12 ranks: ``[0.1,1,5,25,50,75,90,95,99,99.5,99.9,100]``.
+    ``configs``
+        Dictionary keyed by ``<box>_<camera>``, e.g. ``A_faceon``. Each entry
+        contains all of the following:
+
+        ``box``, ``camera``
+            Strings identifying the preset box and camera.
+        ``az_el``
+            Two-number list ``[azimuth, elevation]`` in degrees.
+        ``tau_min``, ``tau_max``
+            Floating-point extrema of the pooled finite positive tau pixels.
+        ``pctl``
+            Dictionary mapping string percentile ranks (e.g. ``"50"`` and
+            ``"99.5"``) to floating-point dimensionless tau values.
+        ``vmin_raw``, ``vmax_raw``
+            Floating-point tau values at ``pmin`` and ``pmax`` before rounding.
+        ``vmin``, ``vmax``
+            Floating-point tau bounds rounded down/up for the movie colourbar.
+
+All tau values are linear and dimensionless, not log10. No individual pixels,
+maps or per-snapshot distributions are saved. Stdout prints percentiles and
+recommended CLI bounds. The JSON omits physical run parameters and counts of
+valid pixels; keep the command with the result.
+
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` (replace the input path)::
+
+    python works/movies/scan_rosseland_range.py /path/to/run \
         --snaps 21,40,60,80,100,120,140,151 --res 512 \
-        --out reports/movies/rosseland/tau_range.json
+        --out data/processed/Movies/tau_range.json
+
+Reruns recompute all selected snapshots and replace the JSON. Use a distinct
+output path for another run or scan configuration. Pass the resulting linear
+``vmin``/``vmax`` to ``render_rosseland_movie.py`` for a fixed logarithmic scale.
+
+Loading examples
+----------------
+Load percentile values and print a movie command fragment::
+
+    import json
+    import numpy as np
+
+    with open("data/processed/Movies/tau_range.json") as stream:
+        scan = json.load(stream)
+    config = scan["configs"]["A_faceon"]
+    percentiles = np.asarray(scan["percentiles"], dtype=float)  # (12,)
+    tau = np.array([config["pctl"][str(p)] for p in scan["percentiles"]])
+    print(percentiles, tau)  # matching float64 (12,) ranks and linear tau
+    print(f"--vmin {config['vmin']:g} --vmax {config['vmax']:g}")
 """
 
 import argparse
@@ -27,9 +92,14 @@ import gc
 import json
 import os
 import sys
+from pathlib import Path
+
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 import numpy as np
-
 import render_evolution  # BOX_PRESETS, find_snapshots
 import render_evolution_multi as rem  # _index_map
 import render_rosseland_movie as rrm  # _opacity_grid, CAMERAS
@@ -72,8 +142,8 @@ def main(argv=None):
         "--res",
         type=int,
         default=512,
-        help="Interpolation grid res for the study (production is 1024; "
-        "percentile bounds are robust to this).",
+        help="Interpolation grid res for the scan (default 512; compare higher "
+        "resolution if needed before production rendering).",
     )
     p.add_argument("--resolution", type=int, default=512, help="Projection image px.")
     p.add_argument("--zoom", type=float, default=1.1)

@@ -1,9 +1,155 @@
-"""Validate annular-maximum-centred nozzle wedges on cached column maps.
+"""Compare nozzle wedges centred on native-cell dissipation maxima.
 
-The direction is found from the maximum integrated-dissipation column in either
-0.6 < R/r_p < 1.75 or 0.8 < R/r_p < 1.75.  In both cases the final wedge keeps
-0.6 < R/r_p < 1.75 and |Delta phi| < 4.5 degrees.  This is a Stage-1 selection
-test only; no timescales are calculated.
+Find the native cell with maximum volumetric dissipation in spherical shells
+``0.6 <= r/r_p <= 1.75`` and ``0.8 <= r/r_p <= 1.75``. Its projected direction
+centres a wedge on existing z-integrated columns: ``0.6 <= R/r_p <= 1.75`` and
+angular half-width 4.5 degrees. Compare captured dissipation and morphology
+between direction choices and grid resolutions. Here r is spherical and R is
+cylindrical radius. This is a selection diagnostic, not a cooling calculation;
+native-cell peak directions may themselves be under-resolved.
+
+Input files
+-----------
+``--mode 1/2/3`` selects ``1e4/1e5/1e6``. Default ``--input-root`` is
+``data/processed/CoolingChecks/nozzle-timescale-series/stage1-selection``.
+First run ``nozzle-selection-validation.py`` to create
+``<input-root>/<run>/columns/selection_snap_<NNNN>_<N>.npz`` for all requested
+grids (256 and 384 by default). It must contain scalar ``run``, ``snapnum``,
+``resolution``, ``time_tfb``, ``snapshot_path``, ``native_peak_x_rp``,
+``native_peak_y_rp``, unit strings ``dissipation_column_unit`` and
+``surface_density_unit``, 1D ``x_rp``/``y_rp`` (shape ``(N,)``), and ``(N,N)``
+``eligible_columns`` (bool), ``dissipation_column`` (erg/s/cm**2) and
+``surface_density`` (g/cm**2). Maps use ``(x,y)`` order and linear values.
+The stored HDF5 source path must remain readable to find native peak directions;
+its ``richio`` quantities time, X/Y/Z and dissipation are used.
+
+Output files
+------------
+Default ``--output-root`` is
+``data/processed/CoolingChecks/nozzle-timescale-series/stage1-wedge-selection``.
+All paths below are relative to ``<output-root>/<run>``.
+
+``directions/direction_snap_<NNNN>.npz``
+    Compressed NumPy archive; all values are scalar arrays with shape ``()``.
+    Retrieve Python values with ``np.load(path)[key].item()`` inside a context
+    manager. These files are consumed by ``nozzle-timescale-validation.py``.
+``figures/wedge_snap_<NNNN>_<N>_dirmin_<0p6|0p8>.png``
+    Raster view of the column maps, wedge boundaries and peak markers. Numeric
+    columns remain in the input NPZ; wedge masks are not saved in a new NPZ.
+``wedge-metrics.csv``
+    Headered CSV with two rows per snapshot per grid (one for each shell).
+``wedge-convergence.csv``
+    Headered CSV, written only for multiple grids, with two rows per snapshot.
+    Compares the smallest and largest requested resolutions.
+
+The direction NPZ keys are:
+
+``run``, ``snapshot_path`` : Unicode arrays, shape ``()``
+    Mass label and original HDF5 path.
+``snapnum`` : int64 array, shape ``()``
+    Snapshot number.
+``direction_peak_x_rp_dirmin_0p6``, ``direction_peak_y_rp_dirmin_0p6``, ``direction_peak_z_rp_dirmin_0p6`` : float64 arrays, shape ``()``
+    BH-frame native peak coordinates in the 0.6..1.75 shell, divided by r_p.
+``direction_peak_x_rp_dirmin_0p8``, ``direction_peak_y_rp_dirmin_0p8``, ``direction_peak_z_rp_dirmin_0p8`` : float64 arrays, shape ``()``
+    Corresponding coordinates for the 0.8..1.75 shell.
+``direction_peak_dissipation_cgs_dirmin_0p6``, ``direction_peak_dissipation_cgs_dirmin_0p8`` : float64 arrays, shape ``()``
+    Native peak volumetric dissipation in erg/s/cm**3 for each shell.
+
+All CSV numeric types below describe values before serialization;
+``csv.DictReader`` yields strings. Fractions are dimensionless, not percentages.
+``wedge-metrics.csv`` contains:
+
+``run``, ``direction_source`` : str
+    Mass label and ``maximum native-cell dissipation density in shell``.
+``snapnum``, ``resolution``, ``selected_pixels`` : int
+    Snapshot number, cubic input grid-point count and number of wedge pixels.
+``time_tfb`` : float
+    Snapshot time in fallback-time units.
+``direction_radius_min_rp``, ``wedge_radius_min_rp``, ``radius_max_rp`` : float
+    Direction-shell inner radius (0.6 or 0.8), wedge inner radius (0.6), and
+    common outer radius (1.75), divided by r_p.
+``angular_half_width_deg``, ``direction_deg`` : float
+    Wedge half-width and central azimuth ``atan2(y,x)`` in degrees.
+``direction_peak_x_rp``, ``direction_peak_y_rp``, ``direction_peak_z_rp`` : float
+    Native direction-peak coordinates in r_p units.
+``direction_peak_radius_rp``, ``direction_peak_projected_radius_rp`` : float
+    Spherical and projected radii of that native cell in r_p units.
+``direction_peak_dissipation_cgs`` : float
+    Native peak volumetric dissipation in erg/s/cm**3.
+``captured_total_dissipation_fraction``, ``captured_annulus_dissipation_fraction`` : float
+    Wedge column sum divided by the positive finite eligible sum, or by that
+    sum restricted to the projected annulus, respectively.
+``global_column_peak_in_wedge`` : int
+    1 if the maximum positive eligible column lies in the wedge; otherwise 0.
+``wedge_peak_x_rp``, ``wedge_peak_y_rp``, ``wedge_peak_radius_rp`` : float
+    Maximum wedge-column position and projected radius in r_p units.
+``wedge_peak_angle_offset_deg`` : float
+    Signed angular offset of that pixel from the central wedge direction,
+    wrapped to [-180, 180) degrees.
+``weighted_radius_rp``, ``weighted_angle_offset_deg`` : float
+    Column-dissipation-weighted projected radius (r_p units), and circular
+    weighted mean angular offset in degrees.
+``native_peak_x_rp``, ``native_peak_y_rp``, ``native_peak_projected_radius_rp`` : float
+    Native maximum over the full ``r < 3 r_p`` aperture, inherited from the
+    input column cache; this need not be the direction-shell maximum.
+``wedge_peak_dissipation_column`` : float
+    Largest column dissipation inside the wedge, in erg/s/cm**2.
+
+``wedge-convergence.csv`` retains ``run`` (str), ``snapnum`` (int),
+``direction_radius_min_rp`` and ``wedge_radius_min_rp`` (floats, r_p units), plus:
+
+``low_resolution``, ``high_resolution`` : int
+    Smallest and largest requested cubic grid-point counts.
+``selected_pixels_low``, ``selected_pixels_high`` : int
+    Corresponding wedge pixel counts.
+``captured_total_dissipation_fraction_low``, ``captured_total_dissipation_fraction_high`` : float
+    Corresponding fractions of total positive eligible dissipation.
+``captured_annulus_dissipation_fraction_low``, ``captured_annulus_dissipation_fraction_high`` : float
+    Corresponding fractions of positive annulus dissipation.
+``wedge_peak_shift_rp`` : float
+    Projected displacement between wedge-column maxima in r_p units.
+``wedge_peak_radius_rp_low``, ``wedge_peak_radius_rp_high`` : float
+    Corresponding projected peak radii in r_p units.
+``direction_difference_deg`` : float
+    Absolute wrapped change in central azimuth, in degrees.
+
+Only eligible, finite, positive dissipation columns enter statistics. Empty
+native shells or wedges raise an error rather than saving a missing-value row.
+Log10 display transforms do not change the saved linear physical values.
+
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` in the richanalysis environment::
+
+    python works/cooling-checks/nozzle-wedge-validation.py --mode 1
+    python works/cooling-checks/nozzle-wedge-validation.py --mode 1 --snapshot-number 108 --resolution 256 --resolution 384
+
+Existing direction caches and figures are reused; ``--overwrite`` rebuilds
+both. CSVs are replaced for the current selection. Use separate output roots
+for subsets/experiments. Direction-cache checks test required keys, not changes
+to source data. Inspect the selection figures before treating downstream
+cooling statistics as representative of the nozzle.
+
+Loading examples
+----------------
+Load a direction and compare captured dissipation between grids::
+
+    from pathlib import Path
+    import csv
+    import numpy as np
+
+    root = Path("data/processed/CoolingChecks/nozzle-timescale-series")
+    root = root / "stage1-wedge-selection/1e4"
+    with np.load(root / "directions/direction_snap_0108.npz") as data:
+        xyz = np.array([data[f"direction_peak_{a}_rp_dirmin_0p6"].item()
+                        for a in "xyz"])
+    print("Direction [degrees]:", np.degrees(np.arctan2(xyz[1], xyz[0])))
+    with (root / "wedge-metrics.csv").open(newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    selected = [row for row in rows if int(row["snapnum"]) == 108
+                and float(row["direction_radius_min_rp"]) == 0.6]
+    print([(int(row["resolution"]), float(row["captured_total_dissipation_fraction"]))
+           for row in selected])
 """
 
 from __future__ import annotations
@@ -14,8 +160,11 @@ import os
 import re
 from pathlib import Path
 
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache" / "matplotlib")
+)
+
 os.environ.setdefault("MPLBACKEND", "Agg")
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-nozzle-wedge")
 
 import dev  # isort: skip  # Configure plotting style before importing pyplot.
 import matplotlib.pyplot as plt
@@ -400,7 +549,7 @@ def write_csv(path: Path, rows: list[dict]) -> None:
     temporary.replace(path)
 
 
-def convergence_rows(rows: list[dict]) -> list[dict]:
+def convergence_rows(rows: list[dict], resolutions=RESOLUTIONS) -> list[dict]:
     by_key = {
         (row["snapnum"], row["direction_radius_min_rp"], row["resolution"]): row
         for row in rows
@@ -408,16 +557,16 @@ def convergence_rows(rows: list[dict]) -> list[dict]:
     output = []
     for snapnum in sorted({row["snapnum"] for row in rows}):
         for direction_radius_min_rp in DIRECTION_RADIUS_MINIMA_RP:
-            low = by_key[(snapnum, direction_radius_min_rp, RESOLUTIONS[0])]
-            high = by_key[(snapnum, direction_radius_min_rp, RESOLUTIONS[1])]
+            low = by_key[(snapnum, direction_radius_min_rp, resolutions[0])]
+            high = by_key[(snapnum, direction_radius_min_rp, resolutions[-1])]
             output.append(
                 {
                     "run": low["run"],
                     "snapnum": snapnum,
                     "direction_radius_min_rp": direction_radius_min_rp,
                     "wedge_radius_min_rp": WEDGE_RADIUS_MIN_RP,
-                    "low_resolution": RESOLUTIONS[0],
-                    "high_resolution": RESOLUTIONS[1],
+                    "low_resolution": resolutions[0],
+                    "high_resolution": resolutions[-1],
                     "selected_pixels_low": low["selected_pixels"],
                     "selected_pixels_high": high["selected_pixels"],
                     "captured_total_dissipation_fraction_low": low[
@@ -459,18 +608,26 @@ def main(
     output_root: Path = typer.Option(  # noqa: B008 - Typer declares options in defaults.
         OUTPUT_ROOT, help="Wedge-validation output root"
     ),
-    overwrite: bool = typer.Option(False, help="Redraw existing figures"),
+    overwrite: bool = typer.Option(False, help="Rebuild direction caches and figures"),
+    resolution: list[int] = typer.Option(
+        list(RESOLUTIONS), min=2, help="Input grid size; repeat to compare grids"
+    ),
     snapshot_index: int | None = typer.Option(
         None, min=0, help="Only process this zero-based representative-snapshot index"
     ),
+    snapshot_number: list[int] | None = typer.Option(
+        None, help="Exact snapshot number; repeat to select several"
+    ),
 ) -> None:
+    """Compare native-peak wedge selections on existing column caches."""
     run = RUN_BY_MODE[mode]
+    resolutions = tuple(sorted(set(resolution)))
     paths = cache_paths(input_root, run)
-    snapnums = sorted({snapnum for snapnum, _ in paths})
+    snapnums = sorted(set(snapshot_number or [snapnum for snapnum, _ in paths]))
     missing = [
         (snapnum, resolution)
         for snapnum in snapnums
-        for resolution in RESOLUTIONS
+        for resolution in resolutions
         if (snapnum, resolution) not in paths
     ]
     if not snapnums or missing:
@@ -486,10 +643,10 @@ def main(
     rows = []
     for snapnum in snapnums:
         direction_path = run_root / "directions" / f"direction_snap_{snapnum:04d}.npz"
-        if not direction_cache_complete(direction_path):
+        if overwrite or not direction_cache_complete(direction_path):
             logger.info("Finding native shell maxima for {} snapshot {}", run, snapnum)
-            build_direction_cache(paths[(snapnum, RESOLUTIONS[0])], direction_path, run)
-        for resolution in RESOLUTIONS:
+            build_direction_cache(paths[(snapnum, resolutions[0])], direction_path, run)
+        for resolution in resolutions:
             for direction_radius_min_rp in DIRECTION_RADIUS_MINIMA_RP:
                 direction_peak = load_direction(direction_path, direction_radius_min_rp)
                 row, arrays = wedge_metrics(
@@ -515,7 +672,10 @@ def main(
                     render(row, arrays, figure_path)
 
     write_csv(run_root / "wedge-metrics.csv", rows)
-    write_csv(run_root / "wedge-convergence.csv", convergence_rows(rows))
+    if len(resolutions) >= 2:
+        write_csv(
+            run_root / "wedge-convergence.csv", convergence_rows(rows, resolutions)
+        )
     logger.info("Wedge validation complete for {}: {} metric rows", run, len(rows))
 
 

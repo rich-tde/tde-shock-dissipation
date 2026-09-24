@@ -1,22 +1,86 @@
 #!/usr/bin/env python3
-"""Render a time-evolution movie of a RICH run (one frame per snapshot).
+r"""Render a time-evolution movie, using one snapshot per evolution frame.
 
-Auto-detects usable snapshots in a run directory (``snap_<i>/snap_<i>.h5`` if
-present, else the ``snap_<i>/`` NPY directory) and feeds them to
-:func:`richio.render.evolution_movie`.  Box and colour scale are fixed from a
-reference snapshot, so only the data (and optionally the camera) change.
+A fixed box and colour range come from a reference snapshot, while the data
+and optionally camera evolve. ``richio.render.evolution_movie`` resamples onto
+a uniform grid and renders an off-axis projection or a volume transfer
+function. Unweighted projections are line integrals; weighted projections are
+means. Volume opacity is a visualization, not a radiative-transfer solution.
 
-Example::
+Input files
+-----------
+``RUN_DIR`` (positional argument)
+    HDF5 snapshots at ``snap_<n>/snap_<n>.h5`` or
+    ``snap_<n>/snap_full_<n>.h5``, top-level files with either name, or extracted
+    ``snap_<n>/`` directories containing ``Den_<n>.npy`` and the required
+    coordinate/field arrays. Optional ``tfb_<n>.txt`` files contain a scalar
+    time in fallback-time units. ``--start``/``--end`` are inclusive snapshot
+    numbers; ``--step`` subsamples the available list.
+``--field``, ``--coords``, reference-frame and box options
+    Default field is density and coordinates are ``CMx,CMy,CMz``. Coordinates
+    are used as stored unless ``--bh-frame`` is enabled; then ``--switch-snap``
+    and stellar/orbital parameters must match the run. Fixed A/B/C boxes are in
+    code lengths (solar-radius scale), not automatically scaled with BH mass.
+    ``--select wind`` zeroes fields outside positive Bernoulli, outward radial
+    velocity and the ``--cone-zr`` wedge; it is an instantaneous diagnostic.
 
-    python render_evolution.py /data1/.../ComptonHiResNewAMR \
+Output files
+------------
+``--out`` (default ``evolution.mp4`` in the working directory)
+    H.264 movie. ``imageio`` decodes each frame to ``uint8 (H, W, 3)``: image
+    row, column, red/green/blue (0--255). Evolution frames follow the selected
+    snapshot order; optional camera-spin frames repeat a snapshot. ``--fps``
+    sets playback rate, not the physical time between outputs.
+``<frames-dir>/frame_<index:05d>.png``
+    Persistent frames; default directory is ``<out-stem>_frames`` beside the
+    movie. ``index`` is a zero-based movie-frame index, not snapshot number.
+    PIL conversion to RGBA gives ``uint8 (H, W, 4)`` including channel 3 alpha.
+    ``--resolution`` sets the render size; colourbars add width and video
+    encoding can round dimensions to even pixels. Axes are screen coordinates;
+    annotations/triad show time/orientation when enabled. Density projections
+    have ``g/cm**2`` colourbar units, density volume views ``g/cm**3``.
+    These files store display colours, not reusable numerical maps or grids.
+
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` (replace the input path)::
+
+    python works/movies/render_evolution.py /path/to/run \
         --mode projection --box disk --res 224 --resolution 1024 \
-        --n-jobs 6 --out reports/gifs/evo_disk_proj.mp4
+        --n-jobs 6 --out data/processed/Movies/evo_disk_proj.mp4
+
+Existing movies are skipped unless ``--overwrite`` is given. Incomplete or
+overwritten runs render all requested frames again; individual frames are not
+resumed. PNGs persist after encoding; ``--keep-frames`` remains a compatibility
+option. Use a separate output for changed settings, or
+``render_evolution_multi.py`` for frame-window resume and multiple fields.
+
+Loading examples
+----------------
+Inspect an encoded frame and its PNG without loading the full movie::
+
+    import imageio.v2 as imageio
+    import numpy as np
+    from PIL import Image
+    from pathlib import Path
+
+    root = Path("data/processed/Movies")
+    with imageio.get_reader(root / "evo_disk_proj.mp4") as movie:
+        rgb = movie.get_data(0)  # (H, W, 3), uint8
+        print(movie.get_meta_data(), rgb.shape)
+    with Image.open(root / "evo_disk_proj_frames/frame_00000.png") as image:
+        rgba = np.array(image.convert("RGBA"))  # (H, W, 4), uint8
 """
 
 import argparse
 import os
 import sys
+from pathlib import Path
 
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 # Fixed boxes (R☉, code length): A is a cube around the origin, B is the wide
 # downstream/pericenter view, C the pericentre close-up.  [x0, y0, z0, x1, y1, z1].
@@ -75,14 +139,24 @@ def _spin_indices(snaps, spin_tfb):
 
 
 def find_snapshots(run_dir, start, end):
+    """Find inclusive snapshot numbers, preferring HDF5 over extracted NPY data."""
+    run_dir = Path(run_dir)
     snaps = []
-    for i in range(start, end + 1):
-        h5 = os.path.join(run_dir, f"snap_{i}", f"snap_{i}.h5")
-        npy = os.path.join(run_dir, f"snap_{i}", f"Den_{i}.npy")
-        if os.path.exists(h5):
-            snaps.append(h5)
-        elif os.path.exists(npy):
-            snaps.append(os.path.join(run_dir, f"snap_{i}"))
+    for index in range(start, end + 1):
+        folder = run_dir / f"snap_{index}"
+        candidates = [
+            folder / f"snap_{index}.h5",
+            folder / f"snap_full_{index}.h5",
+            run_dir / f"snap_{index}.h5",
+            run_dir / f"snap_full_{index}.h5",
+        ]
+        path = next(
+            (candidate for candidate in candidates if candidate.is_file()), None
+        )
+        if path is not None:
+            snaps.append(str(path))
+        elif (folder / f"Den_{index}.npy").is_file():
+            snaps.append(str(folder))
     return snaps
 
 
@@ -104,7 +178,7 @@ def main(argv=None):
         default="wide",
         choices=["wide", "disk", "A", "B", "C"],
         help="wide/disk derive a box from the data; A/B/C are fixed boxes "
-        "(A=cube +-400, B=x[-2000,800] y,z[-1400,1400], C=cube +-200, R_sun).",
+        "(A=cube +-400, B=x[-2000,800] y,z[-1400,1400], C=x,y +-35 and z +-1400, R_sun).",
     )
     p.add_argument(
         "--select",
@@ -221,7 +295,16 @@ def main(argv=None):
         default=21,
         help="First snapshot already in the BH frame (earlier ones get shifted).",
     )
+    p.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace an existing movie and rerender its frames.",
+    )
     args = p.parse_args(argv)
+
+    if Path(args.out).exists() and not args.overwrite:
+        print(f"Skipping existing {args.out}; use --overwrite to replace.", flush=True)
+        return 0
 
     os.environ.setdefault("MPLBACKEND", "Agg")
     os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -259,6 +342,7 @@ def main(argv=None):
     selection_fn = None
     if args.select == "wind":
         import functools
+
         import tde_frame
 
         selection_fn = functools.partial(
@@ -363,7 +447,8 @@ def main(argv=None):
         fps=args.fps,
         n_jobs=args.n_jobs,
         filename=args.out,
-        frames_dir=args.frames_dir,
+        frames_dir=args.frames_dir
+        or str(Path(args.out).with_name(Path(args.out).stem + "_frames")),
         keep_frames=args.keep_frames,
     )
     print(f"[render_evolution] done -> {out['filename']}", flush=True)

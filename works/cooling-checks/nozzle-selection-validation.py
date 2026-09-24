@@ -1,8 +1,181 @@
-"""Validate dissipation-percentile selections for nozzle timescale columns.
+"""Compare percentile definitions of the nozzle on z-integrated column maps.
 
-Stage 1 only: interpolate density and dissipation inside ``r < 3 r_p``,
-integrate along z, compare candidate dissipation percentiles, and write the
-selection-quality figures and tables needed for the first review gate.
+Correct moving-frame coordinates to the BH frame, sample native density and
+volumetric dissipation on a cubic nearest-cell grid within ``r < 3 r_p``, and
+integrate along z. Compare the 99, 99.5, 99.9, 99.95 and 99.99 percentiles of
+finite positive column dissipation using 8-connected components and captured
+power fractions. This tests region selection, not cooling times. Percentiles
+alone do not identify a physical shock uniquely.
+
+Input files
+-----------
+``--mode 1/2/3`` selects ``1e4/1e5/1e6``. ``dev.datapaths.DATAPATHS`` supplies
+RICH ``snap_full_<n>.h5`` or ``snap_<n>.h5`` paths with restart exclusions;
+``richio`` must provide time, X/Y/Z, rho and dissipation. The default epochs
+``t/t_fb`` are 0.5, 1, 1.5, 2 for ``1e4``; 0.3, 0.5 for ``1e5``; and 1, 1.2,
+1.4, 1.5 for ``1e6``, plus each final snapshot. Repeated ``--snapshot-number``
+selects exact epochs. ``--list-only`` prints the selection without gridding.
+No prior processed cache is required.
+
+Output files
+------------
+Default ``--output-root`` is
+``data/processed/CoolingChecks/nozzle-timescale-series/stage1-selection``.
+All paths below are relative to ``<output-root>/<run>``.
+
+``columns/selection_snap_<NNNN>_<N>.npz``
+    Compressed NumPy archive of named arrays, loadable with ``np.load``. N is
+    the grid-point count along each of x, y and z, default 256 and 384. Column
+    arrays have shape ``(N, N)`` in ``(x, y)`` order; z is summed. Transpose a
+    map for ``pcolormesh(x_rp, y_rp, map.T)``. Values are linear, not logarithms.
+    Each of the N sampled z points is assigned the uniform spacing ``dz``.
+    Outside the spherical aperture integrated columns are zero.
+``figures/selection_snap_<NNNN>_<N>.png``
+    Raster comparison of density/dissipation, five percentile masks and their
+    connected components. Non-positive/non-finite pixels are hidden in log10
+    panels. Load the NPZ/CSV, not the PNG, for quantitative analysis.
+``selection-metrics.csv``
+    Headered CSV, five rows per snapshot per grid, with the metrics below.
+``selection-convergence.csv``
+    Headered CSV, five rows per snapshot, written only for two or more grids.
+    Compares the first two resolutions in the supplied order (even if more
+    resolutions are requested). The paired-field schema is given below.
+
+The NPZ keys are:
+
+``run``, ``snapshot_path`` : Unicode arrays, shape ``()``
+    Mass label and source HDF5 path; retrieve strings with ``.item()``.
+``resolution``, ``snapnum`` : int64 arrays, shape ``()``
+    Cubic grid-point count N and snapshot number.
+``time_tfb``, ``r_p_cm`` : float64 arrays, shape ``()``
+    Snapshot time divided by fallback time, and pericentre radius in cm.
+``native_peak_x_rp``, ``native_peak_y_rp``, ``native_peak_z_rp`` : float64 arrays, shape ``()``
+    BH-frame position of maximum native volumetric dissipation within the
+    spherical aperture, divided by pericentre radius.
+``dx_rp``, ``dy_rp``, ``dz_rp`` : float64 arrays, shape ``()``
+    Uniform spacings in pericentre units. Pixel area is
+    ``dx_rp * dy_rp * r_p_cm**2`` in cm**2.
+``x_rp``, ``y_rp`` : float64 arrays, shape ``(N,)``
+    BH-frame grid coordinates in pericentre units.
+``eligible_columns`` : bool array, shape ``(N, N)``
+    True where at least one z sample lies inside the sphere. Percentile
+    candidates also require finite, positive ``dissipation_column``.
+``dissipation_column`` : float64 array, shape ``(N, N)``
+    Integrated volumetric dissipation in erg/s/cm**2, equivalent to g/s**3.
+    Multiply by the pixel area before summing a physical luminosity.
+``surface_density`` : float64 array, shape ``(N, N)``
+    Integrated mass density in g/cm**2.
+``dissipation_column_unit``, ``surface_density_unit`` : Unicode arrays, shape ``()``
+    Serialized CGS unit strings, normally ``g/s**3`` and ``g/cm**2``. All
+    archived quantities are plain NumPy arrays, with no attached unit object.
+
+``selection-metrics.csv`` fields (numeric types describe the values before CSV
+serialization; ``csv.DictReader`` returns strings) are:
+
+``run`` : str
+    Mass label.
+``snapnum``, ``resolution`` : int
+    Snapshot number and cubic grid-point count.
+``time_tfb``, ``percentile`` : float
+    Time in fallback units and requested percentile on the 0..100 scale.
+``threshold``, ``peak_dissipation_column`` : float
+    Selection threshold and largest positive eligible column, in erg/s/cm**2.
+``candidate_pixels``, ``selected_pixels``, ``component_count`` : int
+    Positive finite eligible count, count at or above threshold, and number of
+    8-connected selected components.
+``captured_dissipation_fraction`` : float
+    Selected column sum divided by the positive finite eligible sum.
+``largest_component_pixel_fraction``, ``largest_component_dissipation_fraction`` : float
+    Fraction of selected pixels and selected dissipation in the component with
+    the most pixels.
+``peak_component_pixel_fraction``, ``peak_component_dissipation_fraction`` : float
+    Same fractions for the component containing the largest column dissipation.
+``nozzle_anchor_component_pixel_fraction``, ``nozzle_anchor_component_dissipation_fraction`` : float
+    Same fractions for the component containing the selected pixel nearest the
+    projected native peak. Fractions are dimensionless, not percentages.
+``column_peak_in_nozzle_anchor_component`` : int
+    1 if column-peak and native-anchor components coincide, otherwise 0.
+``native_peak_grid_pixel_selected`` : int
+    1 if the grid pixel nearest the projected native peak passes the selection.
+``nearest_selected_to_native_peak_rp``, ``column_peak_native_offset_rp`` : float
+    Projected distance to the nearest selected pixel, and projected distance
+    between column and native peaks, both divided by pericentre radius.
+``native_peak_x_rp``, ``native_peak_y_rp``, ``peak_x_rp``, ``peak_y_rp`` : float
+    Projected native-peak and column-peak positions in pericentre units.
+
+``selection-convergence.csv`` retains ``run`` (str), ``snapnum`` (int) and
+``percentile`` (float), and contains the following fields:
+
+``low_resolution``, ``high_resolution`` : int
+    First and second requested grid-point counts, not necessarily sorted.
+``captured_dissipation_fraction_low``, ``captured_dissipation_fraction_high`` : float
+    Captured fractions from the corresponding metric rows.
+``captured_dissipation_fraction_difference`` : float
+    High minus low captured fraction; signed, dimensionless.
+``peak_shift_rp`` : float
+    Projected displacement of the column maximum between grids, in r_p units.
+``peak_component_pixel_fraction_low``, ``peak_component_pixel_fraction_high`` : float
+    Corresponding peak-component pixel fractions.
+``nozzle_anchor_component_pixel_fraction_low``, ``nozzle_anchor_component_pixel_fraction_high`` : float
+    Corresponding anchor-component pixel fractions.
+``nozzle_anchor_component_dissipation_fraction_low``, ``nozzle_anchor_component_dissipation_fraction_high`` : float
+    Corresponding anchor-component dissipation fractions.
+``column_peak_in_nozzle_anchor_component_low``, ``column_peak_in_nozzle_anchor_component_high`` : int
+    Corresponding coincidence flags, each 0 or 1.
+``native_peak_grid_pixel_selected_low``, ``native_peak_grid_pixel_selected_high`` : int
+    Corresponding native-peak selection flags, each 0 or 1.
+``nearest_selected_to_native_peak_rp_low``, ``nearest_selected_to_native_peak_rp_high`` : float
+    Corresponding selected-to-native-peak distances in r_p units.
+
+There is no missing-row sentinel: empty positive candidate sets raise an error.
+NaNs present in input maps are excluded from percentile candidates.
+
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` in the richanalysis environment::
+
+    python works/cooling-checks/nozzle-selection-validation.py --mode 1 --list-only
+    python works/cooling-checks/nozzle-selection-validation.py --mode 1 --snapshot-number 108 --resolutions 256,384
+
+Complete caches are reused; ``--overwrite`` rebuilds them. Figures are retained
+unless absent, ``--rerender`` or ``--overwrite``. CSVs are replaced for the current
+selection. Use separate output roots for subsets/experiments. Cache checks test
+shape and fields, not changes to the source HDF5. Use the matching ``jobs/``
+submission script for expensive grids. These columns are the inputs to
+``nozzle-wedge-validation.py``.
+
+Loading examples
+----------------
+Read a map, compute a luminosity and display its orientation explicitly::
+
+    from pathlib import Path
+    import numpy as np
+    import dev
+    import matplotlib.pyplot as plt
+
+    root = Path("data/processed/CoolingChecks/nozzle-timescale-series")
+    root = root / "stage1-selection/1e4"
+    with np.load(root / "columns/selection_snap_0108_256.npz") as data:
+        x, y = data["x_rp"], data["y_rp"]
+        column = data["dissipation_column"]
+        mask = data["eligible_columns"] & np.isfinite(column)
+        area = data["dx_rp"].item() * data["dy_rp"].item() * data["r_p_cm"].item()**2
+    print("Aperture luminosity [erg/s]:", column[mask].sum() * area)
+    fig, ax = plt.subplots()
+    image = ax.pcolormesh(x, y, np.where(mask, column, np.nan).T, shading="nearest")
+    ax.set(xlabel="x/r_p", ylabel="y/r_p", aspect="equal")
+    fig.colorbar(image, ax=ax, label="D [erg/s/cm**2]")
+    plt.show()
+
+Read the CSV by named fields rather than assuming a column order::
+
+    import csv
+    with (root / "selection-metrics.csv").open(newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    selected = [row for row in rows if int(row["snapnum"]) == 108
+                and float(row["percentile"]) == 99.9]
+    print([(int(row["resolution"]), float(row["captured_dissipation_fraction"]))
+           for row in selected])
 """
 
 from __future__ import annotations
@@ -14,8 +187,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache" / "matplotlib")
+)
+
 os.environ.setdefault("MPLBACKEND", "Agg")
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-nozzle-selection")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import dev  # isort: skip  # Configure plotting style before importing pyplot.
@@ -327,7 +503,9 @@ def positive_log10(values):
     return np.log10(np.where(np.isfinite(values) & (values > 0), values, np.nan))
 
 
-def render_validation(cache_path: Path, output_path: Path) -> list[dict]:
+def render_validation(
+    cache_path: Path, output_path: Path, save_figure: bool = True
+) -> list[dict]:
     with np.load(cache_path) as data:
         run = str(data["run"])
         snapnum = int(data["snapnum"])
@@ -507,8 +685,9 @@ def render_validation(cache_path: Path, output_path: Path) -> list[dict]:
         ax.set_xlabel(r"$x/r_p$")
         ax.set_ylabel(r"$y/r_p$")
     fig.tight_layout()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=180)
+    if save_figure:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output_path, dpi=180)
     plt.close(fig)
     return metrics_rows
 
@@ -609,13 +788,25 @@ def main(
     snapshot_index: int | None = typer.Option(
         None, min=0, help="Only process this zero-based representative-snapshot index"
     ),
+    snapshot_number: list[int] | None = typer.Option(
+        None,
+        help="Exact snapshot number; repeat to replace the default epoch selection",
+    ),
     resolutions: str = typer.Option(
         "256,384",
         help="Comma-separated grid resolutions (small values are for smoke tests)",
     ),
 ) -> None:
+    """Compare percentile-selected columns; write NPZ maps, PNGs and selection CSVs."""
     config = RUNS[mode]
-    selected = selected_snapshots(config.run)
+    if snapshot_number:
+        numbers, paths = DATAPATHS(config.run)
+        selected = [
+            (number, Path(paths[numbers.index(number)]), number == numbers[-1])
+            for number in dict.fromkeys(snapshot_number)
+        ]
+    else:
+        selected = selected_snapshots(config.run)
     if snapshot_index is not None:
         if snapshot_index >= len(selected):
             raise typer.BadParameter(
@@ -664,9 +855,15 @@ def main(
                 )
             else:
                 logger.info("Using cached {}", cache_path)
-            if rerender or not figure_path.is_file() or figure_path.stat().st_size == 0:
+            save_figure = (
+                overwrite
+                or rerender
+                or not figure_path.is_file()
+                or figure_path.stat().st_size == 0
+            )
+            if save_figure:
                 logger.info("Rendering {}", figure_path)
-            rows = render_validation(cache_path, figure_path)
+            rows = render_validation(cache_path, figure_path, save_figure=save_figure)
             all_rows.extend(rows)
 
     write_csv(run_root / "selection-metrics.csv", all_rows)

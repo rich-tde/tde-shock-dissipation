@@ -1,29 +1,82 @@
 #!/usr/bin/env python3
-"""TDE reference-frame correction for movies (kept out of the richio library).
+r"""Shift pre-transition TDE snapshots from the star frame into the BH frame.
 
-The simulation runs in the **star frame** (star at the origin) until the
-returning debris triggers a switch to the **black-hole frame** at a known
-snapshot; thereafter snapshots are stored in the BH frame.  To make a continuous
-movie we transform the *pre-switch* snapshots into the BH frame by adding the
-star's orbital position/velocity, exactly as the simulation does in
-``UpdateReferenceFrame`` (see the run's main.cpp):
+The star's Paczynski-Wiita parabolic orbit supplies in-plane position/velocity
+offsets: ``x_BH=x_star+x0[0]``, ``y_BH=y_star+x0[1]``,
+``vx_BH=vx_star+x0[2]``, ``vy_BH=vy_star+x0[3]``; z/vz remain unchanged. This
+scripts-only wrapper makes a time-evolution movie continuous across the known
+reference-frame transition. The orbit and in-plane orientation are run
+assumptions; source snapshots are never modified.
 
-    x_BH = x_star + x0[0],  y_BH = y_star + x0[1]   (z unchanged)
-    vx  += x0[2],           vy  += x0[3]
+Input files
+-----------
+``make_bh_frame_loader(...)(path)``
+    Reads the same HDF5 file or extracted NPY snapshot directory as
+    ``richio.load``. The snapshot must have a known number and time in RICH
+    code units to correct a pre-switch frame. Unknown numbers, missing times
+    and snapshots at/after ``switch_snap`` are returned unchanged.
+``m_bh``, ``m_star``, ``r_star``, ``beta``, ``switch_snap``
+    Scalar masses/radius in code solar units, dimensionless penetration factor
+    and integer transition snapshot (defaults 1e4, 0.5, 0.47, 1 and 21).
+    Choose the transition from the actual simulation, not its filename pattern.
+``select_unbound_outflow(snap, ...)``
+    Additionally reads coordinates, velocity, density, internal energy,
+    pressure and specific radiation energy to evaluate positive Bernoulli and
+    radial outflow; optional ``zr_max`` and ``x_sign`` restrict the geometry.
 
-where ``x0 = (x, y, vx, vy)`` is the star's state on a **Paczynski–Wiita
-parabolic orbit** integrated from pericenter to the snapshot time.
+Output files
+------------
+No files are written. The API produces in-memory results:
 
-Usage (in a movie driver, before calling ``evolution_movie``)::
+``make_bh_frame_loader(...)``
+    A callable ``load(path)`` returning a snapshot or frame wrapper. Retrieve
+    shifted coordinates/velocities through ``snapshot._get_data(name)``;
+    delegated attributes/methods do not necessarily see the correction. Each
+    retrieved cell field has shape ``(N,)`` in original cell order and retains
+    its ``unyt`` units. N is the snapshot cell count.
+``star_orbit_x0(t, ...)``
+    ``float64 ndarray (4,)``. Zero-based entries 0/1 are x/y in code lengths;
+    2/3 are vx/vy in code length per code time. ``t`` is a scalar code time.
+    The returned plain array has mixed units; convert positions with
+    ``richio.units.lscale`` and velocities with ``lscale/tscale``.
+``select_unbound_outflow(...)``
+    Boolean ``ndarray (N,)``: true for positive Bernoulli and radial velocity,
+    optionally with ``abs(z)/r <= zr_max`` and the requested sign of x.
+    It diagnoses instantaneous motion rather than proving future escape.
 
-    import richio, tde_frame
-    richio.load = tde_frame.make_bh_frame_loader(m_bh=1e4, m_star=0.5,
-                                                 r_star=0.47, beta=1.0,
-                                                 switch_snap=21)
+Usage
+-----
+Import this helper from a movie driver; it has no command-line calculation.
+For forked render workers, assign the returned loader to ``richio.load`` before
+starting workers, so they inherit it. Avoid wrapping an already wrapped loader;
+``orig_load`` can supply the original explicitly. Repeated loads recompute
+corrections without writing caches.
 
-Forked render workers inherit the monkeypatched ``richio.load``.  This is a
-deliberately minimal, scripts-only shim; a proper TDE submodule may live in
-richio later.
+Loading examples
+----------------
+Use a local loader from the repository root without changing global richio::
+
+    import sys
+    from pathlib import Path
+    import richio
+
+    sys.path.insert(0, str(Path("works/movies").resolve()))
+    import tde_frame
+
+    load_bh = tde_frame.make_bh_frame_loader(
+        m_bh=1e4, m_star=0.5, r_star=0.47, beta=1, switch_snap=21,
+        orig_load=richio.load,
+    )
+    snap = load_bh("/path/to/snap_20.h5")
+    x_cm = snap._get_data("CMx").to_value("cm")  # (N,), shifted x positions
+    print(x_cm.shape)
+
+Inspect the orbit at pericentre without reading a snapshot::
+
+    state = tde_frame.star_orbit_x0(0)
+    position = state[:2] * richio.units.lscale  # (2,), x/y
+    velocity = state[2:] * richio.units.lscale / richio.units.tscale  # (2,), vx/vy
+    print(position.to_value("cm"), velocity.to_value("cm/s"))
 """
 
 import numpy as np

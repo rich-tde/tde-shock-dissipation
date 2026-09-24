@@ -1,271 +1,257 @@
 #!/usr/bin/env python3
+r"""Render RICH projections or slices as a PNG sequence and an animated GIF.
+
+Nearest-neighbour resampling produces a line integral (``projection``) or a
+section at ``--slice-coordinate`` (``slice``). A fixed logarithmic colour range
+is determined from the final selected snapshot, rounded outward to half
+decades, unless ``--vmin``/``--vmax`` give log10 cgs bounds. Earlier frames can
+clip; this is a visualization rather than a grid-convergence test. Coordinates
+are used as stored, without a BH-frame correction.
+
+Input files
+-----------
+``RUN_DIR`` (positional argument)
+    Run directory with top-level or ``snap_<n>/`` HDF5 files named
+    ``snap_<n>.h5``/``snap_full_<n>.h5``, or extracted ``snap_<n>/`` NPY
+    directories. Requires the selected ``--field`` (repeatable; default
+    ``dissipation``) and ``--coords`` (default ``CMx,CMy,CMz``).
+``--box u0 v0 w0 u1 v1 w1``
+    Bounds in RICH code lengths (solar-radius scale). ``u,v`` are the displayed
+    axes from ``--plane``; ``w`` is the remaining integration/slice axis. The
+    default is ``[-6,-4,-2,2.5,3,2] * R_* (M_BH/M_*)**(2/3)`` in that order.
+    ``--m-bh``, ``--m-star`` and ``--r-star`` affect only this default box.
+
+Output files
+------------
+``<out>/<field>_<proj|slice>_<plane>/<same-stem>_snap_<n:04d>.png``
+    Annotated PNG with a quantitative colourbar; ``n`` is the snapshot number.
+    Default ``out`` is ``data/processed/Movies/Gifs`` under the repository.
+    Loading with ``PIL.Image.convert("RGBA")`` gives ``uint8 (H, W, 4)`` in
+    row, column, red/green/blue/alpha order (channel values 0--255). Canvas size
+    is 6 by 5 inches at 150 dpi before tight cropping, so ``H,W`` depend on
+    labels. Image x/y axes follow the two letters in ``--plane``. The colourbar
+    displays log10 cgs values: density is ``g/cm**2`` in projections or
+    ``g/cm**3`` in slices; dissipation is ``erg/s/cm**2`` or ``erg/s/cm**3``.
+``<out>/<field>_<proj|slice>_<plane>.gif``
+    Looping, palette-encoded animation in increasing selected snapshot order.
+    ``--duration`` is display seconds per frame (default 0.2). Decode each
+    frame to RGB for a ``uint8 (H, W, 3)`` array. GIF palette quantization can
+    alter colours. Neither format stores the scientific arrays or coordinates.
+
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` (replace the input path)::
+
+    python works/movies/make_gif.py /path/to/run --start 21 --end 30 \
+        --field density --plane yz --res 128
+    python works/movies/make_gif.py /path/to/run --field density \
+        --plane xy --plot-kind slice --slice-coordinate 0 --res 256 \
+        --box -100 -100 -20 100 100 20 --out data/processed/Movies/xy-slices
+
+``--start``/``--end`` are inclusive snapshot numbers; ``--step`` subsamples
+available snapshots. Existing PNGs/GIFs are reused unless ``--overwrite`` is
+set; ``--resume`` is a compatibility alias for that default. Use a new ``--out``
+for changed inputs/settings. ``--dry-run`` lists paths without loading data.
+
+Loading examples
+----------------
+Inspect a PNG and count animation frames for the first command above::
+
+    import numpy as np
+    from pathlib import Path
+    from PIL import Image
+
+    root = Path("data/processed/Movies/Gifs")
+    stem = "density_proj_yz"
+    with Image.open(root / stem / f"{stem}_snap_0021.png") as image:
+        rgba = np.array(image.convert("RGBA"))  # (H, W, 4), uint8
+    with Image.open(root / f"{stem}.gif") as movie:
+        print(movie.n_frames, movie.info.get("duration"))  # count, milliseconds
+        movie.seek(0)
+        first_rgb = np.array(movie.convert("RGB"))  # (H, W, 3), uint8
 """
-Make GIFs from a series of snapshots using richio plotting helpers.
 
-Features:
-- Iterate snapshot folders named `snap_<n>` in a numeric range (skips missing).
-- For each configured plot (projection or slice), produce per-snapshot PNGs and a GIF.
-- Colorbar range (vmin/vmax) is computed from the latest available snapshot per plot.
-- Configurable `PLOTS` list at top makes adding/removing plots trivial.
-- Adds a title with the snapshot time when available.
-
-Edit the PLOTS list below to add/remove plot types/parameters.
-
-Examples:
-python make_gif.py /data1/projects/pi-rossiem/TDE_data/R0.47M0.5BH10000beta1S60n1.5ComptonHiResNewAMR/ --start 1 --end 151
-"""
-
-from pathlib import Path
 import argparse
 import logging
 import math
+import os
+from pathlib import Path
 
-import matplotlib
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
+os.environ.setdefault("MPLBACKEND", "Agg")
 
-matplotlib.use("Agg")
-import dev  # noqa: F401  # Configure local imports and the plotting style.
-import matplotlib.pyplot as plt
+import dev  # noqa: F401  # isort: skip  # Configure style before pyplot.
 import imageio.v2 as imageio
+import matplotlib.pyplot as plt
 import numpy as np
 import unyt as u
+from render_evolution import find_snapshots
 
 import richio
 
 LOG = logging.getLogger("make_gif")
 
-# ---------------------- USER-CONFIGURABLE PLOTS ----------------------
-# Each entry should be a dict with at least:
-# - name: short name used for output files
-# - type: 'projection' or 'slice'
-# - data: data key or unyt array (e.g., 'dissipation')
-# - kwargs: additional kwargs forwarded to snap.project or snap.slice
-# Example: add/remove entries from this list to change outputs.
-beta = 1
-mstar = 0.5 * richio.units.mscale
-rstar = 0.47 * richio.units.lscale
-mbh = 10**4 * richio.units.mscale
-rt = rstar * (mbh / mstar) ** (1 / 3)
 
-ra = rt**2 / rstar  # 2 * Rt * (Mbh/mstar)**(1/3)
-
-nozzle_box = u.unyt_array([-3 * rt, -3 * rt, -2 * rt, 3 * rt, 3 * rt, 2 * rt])
-big_box = u.unyt_array([-6 * ra, -4 * ra, -2 * ra, 2.5 * ra, 3 * ra, 2 * ra])
-mid_box = u.unyt_array([-3 * ra, -2 * ra, -0.8 * ra, 2 * ra, 2 * ra, 0.8 * ra])
-
-PLOTS = [
-    {
-        "name": "dissipation_proj_yz",
-        "type": "projection",
-        "data": "dissipation",
-        "kwargs": {
-            "res": (512, 512, 512),
-            "x": "CMy",
-            "y": "CMz",
-            "z": "CMx",
-            "box_size": big_box,
-        },
-        "plot_kwargs": {
-            "cmap": "cividis",
-            "label_latex": r"\text{Energy Dissipation}",
-            "unit_latex": r"\mathrm{(erg/s/cm^2)}",
-        },
-    },
-]
-# ---------------------------------------------------------------------
-
-
-def find_available_snapshots(base: Path, start: int, end: int):
-    """Return sorted list of (idx, path) for existing snap_<idx> folders."""
-    snaps = []
-    for i in range(start, end + 1):
-        p = base / f"snap_{i}"
-        if p.exists():
-            snaps.append((i, p))
-    return snaps
-
-
-def load_snapshot(path: Path):
-    LOG.info("Loading %s", path)
-    return richio.load(str(path))
-
-
-def compute_vrange_from_snapshot(snap, plot_cfg):
-    """Compute vmin/vmax (in log10 space) for a given snapshot and plot config.
-
-    Rounds outward to nearest half-integers (floor/ceil on *2)/2.
-    Returns tuple (vmin, vmax) or (None, None) on failure.
-    """
-    try:
-        if plot_cfg["type"] == "projection":
-            projected, xspace, yspace = snap.project(
-                data=plot_cfg["data"], **plot_cfg["kwargs"]
-            )
-            arr = np.asarray(np.log10(projected))
-        else:
-            sliced, xspace, yspace = snap.slice(
-                data=plot_cfg["data"], **plot_cfg["kwargs"]
-            )
-            arr = np.asarray(np.log10(sliced))
-
-        finite_mask = np.isfinite(arr)
-        if not finite_mask.any():
-            LOG.warning(
-                "No finite values found when computing vmin/vmax for %s",
-                plot_cfg["name"],
-            )
-            return None, None
-
-        dmin = float(np.min(arr[finite_mask]))
-        dmax = float(np.max(arr[finite_mask]))
-
-        vmin = math.floor(dmin * 2.0) / 2.0
-        vmax = math.ceil(dmax * 2.0) / 2.0
-        return vmin, vmax
-    except Exception:
-        LOG.exception("Failed to compute vmin/vmax for config %s", plot_cfg["name"])
-        return None, None
-
-
-def title_from_snapshot(snap):
-    # try a few common attributes for snapshot time
-    for attr in ("tfb", "time", "t"):
-        if hasattr(snap, attr):
-            return f"t = {getattr(snap, attr):.4f}"
-    # fallback to nothing
-    return ""
-
-
-def make_plot_for_snapshot(snap, idx, plot_cfg, vrange, outpath: Path):
-    """Create and save a plot for a single snapshot for one plot_cfg.
-
-    vrange is (vmin, vmax) in log10 units (or None values to let scalar_map choose).
-    """
-    try:
-        if plot_cfg["type"] == "projection":
-            data_arr, xspace, yspace = snap.project(
-                data=plot_cfg["data"], **plot_cfg["kwargs"]
-            )
-        else:
-            data_arr, xspace, yspace = snap.slice(
-                data=plot_cfg["data"], **plot_cfg["kwargs"]
-            )
-
-        # build and save the figure using richio plotting helper
-        fig, ax = plt.subplots(figsize=(6, 5))
-
-        # prepare kwargs to pass to scalar_map
-        plot_args = dict(
-            f=data_arr,
-            xspace=xspace,
-            yspace=yspace,
-            ax=ax,
-            **plot_cfg.get("plot_kwargs", {}),
+def sample_map(snapshot, field, args, box):
+    """Return a unitful map and axes with coordinates permuted into viewing order."""
+    order = {"xy": (0, 1, 2), "xz": (0, 2, 1), "yz": (1, 2, 0)}[args.plane]
+    coords = args.coords.split(",")
+    coordinate_unit = snapshot._get_data(coords[order[0]]).units
+    kwargs = {
+        "res": args.res,
+        "X": coords[order[0]],
+        "Y": coords[order[1]],
+        "Z": coords[order[2]],
+        "box_size": box.to(coordinate_unit),
+        "workers": args.workers,
+    }
+    if args.plot_kind == "slice":
+        return snapshot.slice(
+            field,
+            slice_coord=(args.slice_coordinate * richio.units.lscale).to(
+                coordinate_unit
+            ),
+            **kwargs,
         )
-
-        if vrange is not None and vrange[0] is not None and vrange[1] is not None:
-            plot_args.update({"vmin": vrange[0], "vmax": vrange[1]})
-
-        # call scalar_map which handles the colorbar
-        ax, im = richio.plots.scalar_map(**plot_args)
-
-        # add title/time info
-        title = title_from_snapshot(snap)
-        if title:
-            ax.set_title(f"{plot_cfg['name']} — {title}")
-        else:
-            ax.set_title(f"{plot_cfg['name']} — snap {idx}")
-
-        outpath.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(outpath, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        LOG.info("Saved %s", outpath)
-        return True
-    except Exception:
-        LOG.exception(
-            "Failed to make plot for snap %s, config %s", idx, plot_cfg["name"]
-        )
-        return False
-
-
-def build_gif(image_paths, gif_path, duration=0.2):
-    imgs = []
-    for p in image_paths:
-        imgs.append(imageio.imread(str(p)))
-    imageio.mimsave(str(gif_path), imgs, duration=duration)
-    LOG.info("Wrote GIF %s", gif_path)
+    return snapshot.project(field, **kwargs)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Make GIFs from snapshots using richio"
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("base_dir", help="Base directory containing snap_N folders")
+    parser.add_argument("base_dir", help="Run directory containing snapshots.")
     parser.add_argument("--start", type=int, default=1)
     parser.add_argument("--end", type=int, default=150)
-    parser.add_argument("--out", default="out_plots")
+    parser.add_argument("--step", type=int, default=1)
+    parser.add_argument(
+        "--field",
+        action="append",
+        help="Repeat for multiple fields (default: dissipation).",
+    )
+    parser.add_argument(
+        "--plot-kind", choices=("projection", "slice"), default="projection"
+    )
+    parser.add_argument("--plane", choices=("xy", "xz", "yz"), default="yz")
+    parser.add_argument("--coords", default="CMx,CMy,CMz")
+    parser.add_argument("--res", type=int, default=512)
+    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument(
+        "--box",
+        type=float,
+        nargs=6,
+        help="u0 v0 w0 u1 v1 w1, in code lengths; see module docstring.",
+    )
+    parser.add_argument(
+        "--m-bh", type=float, default=1e4, help="Solar masses; default box only."
+    )
+    parser.add_argument(
+        "--m-star", type=float, default=0.5, help="Solar masses; default box only."
+    )
+    parser.add_argument(
+        "--r-star", type=float, default=0.47, help="Solar radii; default box only."
+    )
+    parser.add_argument("--slice-coordinate", type=float, default=0.0)
+    parser.add_argument("--cmap", default="cividis")
+    parser.add_argument(
+        "--vmin",
+        type=float,
+        help="Fixed log10 cgs colour minimum, shared by selected fields.",
+    )
+    parser.add_argument(
+        "--vmax",
+        type=float,
+        help="Fixed log10 cgs colour maximum, shared by selected fields.",
+    )
+    parser.add_argument(
+        "--duration", type=float, default=0.2, help="Seconds per GIF frame."
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=Path(__file__).resolve().parents[2] / "data/processed/Movies/Gifs",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Skip creating outputs that already exist and continue",
+        help="Compatibility alias: reuse existing outputs (already the default).",
+    )
+    parser.add_argument(
+        "--overwrite", action="store_true", help="Recompute all PNGs and replace GIFs."
     )
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args(argv)
-
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
-    base = Path(args.base_dir)
-    outdir = Path(args.out)
-
-    snaps = find_available_snapshots(base, args.start, args.end)
-    if not snaps:
-        LOG.error(
-            "No snapshots found in %s in range %d..%d", base, args.start, args.end
-        )
-        return 1
-
-    # pick latest available snapshot (highest index) to determine vrange per plot
-    latest_idx, latest_path = max(snaps, key=lambda x: x[0])
-    LOG.info("Using latest snapshot %s to compute color ranges", latest_path)
-
-    latest_snap = load_snapshot(latest_path)
-
-    vranges = {}
-    for cfg in PLOTS:
-        vranges[cfg["name"]] = compute_vrange_from_snapshot(latest_snap, cfg)
-
+    snapshots = find_snapshots(args.base_dir, args.start, args.end)[:: args.step]
+    if not snapshots:
+        parser.error("No snapshots found in the requested range.")
+    fields = args.field or ["dissipation"]
+    kind = "proj" if args.plot_kind == "projection" else "slice"
     if args.dry_run:
-        LOG.info("Dry run: vranges = %s", vranges)
+        for path in snapshots:
+            print(path)
+        for field in fields:
+            print(f"Output: {args.out / f'{field}_{kind}_{args.plane}.gif'}")
         return 0
 
-    # For each plot config, produce images then a gif
-    for cfg in PLOTS:
-        name = cfg["name"]
-        img_paths = []
-        cfg_out = outdir / name
-        for idx, path in snaps:
-            outpath = cfg_out / f"{name}_snap_{idx:04d}.png"
-            # if resuming and image already exists, keep it and skip generation
-            if args.resume and outpath.exists():
-                LOG.info("Resuming: skipping existing image %s", outpath)
-                img_paths.append(outpath)
-                continue
-
-            try:
-                snap = load_snapshot(path)
-                ok = make_plot_for_snapshot(snap, idx, cfg, vranges.get(name), outpath)
-                if ok:
-                    img_paths.append(outpath)
-            except Exception:
-                LOG.exception("Skipping snap %s for plot %s", path, name)
-
-        if img_paths:
-            gif_path = outdir / f"{name}.gif"
-            if args.resume and gif_path.exists():
-                LOG.info("Resuming: skipping existing GIF %s", gif_path)
-            else:
-                build_gif(img_paths, gif_path)
-
+    radius = args.r_star * (args.m_bh / args.m_star) ** (2 / 3)
+    bounds = args.box or [value * radius for value in (-6, -4, -2, 2.5, 3, 2)]
+    box = u.unyt_array(bounds, richio.units.lscale)
+    reference = None
+    for field in fields:
+        name = f"{field}_{kind}_{args.plane}"
+        gif = args.out / f"{name}.gif"
+        if gif.exists() and not args.overwrite:
+            LOG.info("Skipping existing %s; use --overwrite to replace", gif)
+            continue
+        if reference is None:
+            reference = richio.load(snapshots[-1])
+        data, _, _ = sample_map(reference, field, args, box)
+        positive = np.asarray(data)[np.isfinite(data) & (data > 0)]
+        lower = (
+            args.vmin
+            if args.vmin is not None
+            else math.floor(np.log10(positive.min()) * 2) / 2
+        )
+        upper = (
+            args.vmax
+            if args.vmax is not None
+            else math.ceil(np.log10(positive.max()) * 2) / 2
+        )
+        LOG.info("%s fixed log10 range: %g .. %g", field, lower, upper)
+        images = []
+        for path in snapshots:
+            snapshot = richio.load(path)
+            number = snapshot.snapnum
+            outpath = args.out / name / f"{name}_snap_{number:04d}.png"
+            if not outpath.exists() or args.overwrite:
+                data, xspace, yspace = sample_map(snapshot, field, args, box)
+                fig, ax = plt.subplots(figsize=(6, 5))
+                richio.plots.scalar_map(
+                    data,
+                    xspace,
+                    yspace,
+                    ax=ax,
+                    cmap=args.cmap,
+                    label_latex=field,
+                    vmin=lower,
+                    vmax=upper,
+                )
+                ax.set_xlabel(f"{args.plane[0]} [{xspace.units}]")
+                ax.set_ylabel(f"{args.plane[1]} [{yspace.units}]")
+                outpath.parent.mkdir(parents=True, exist_ok=True)
+                fig.savefig(outpath, dpi=150, bbox_inches="tight")
+                plt.close(fig)
+                LOG.info("Saved %s (input %s)", outpath, path)
+            images.append(imageio.imread(outpath))
+        imageio.mimsave(
+            gif, images, format="GIF", duration=1000 * args.duration, loop=0
+        )
+        LOG.info("Wrote %s", gif)
     return 0
 
 

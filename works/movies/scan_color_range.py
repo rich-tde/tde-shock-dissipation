@@ -1,24 +1,85 @@
-"""Scan first+last snapshots for fixed projection colour limits.
+r"""Choose fixed multi-field movie colour limits from the endpoint snapshots.
 
-For each ``(box, camera)`` and field, project the **first** and **last** snapshot
-and take the **union** of their auto colour bounds, so the movie's fixed colour
-scale won't clip the early or late state (the production driver otherwise fixes the
-scale from the last snapshot alone).  Only the first+last frames are touched, so the
-cost is ~one KDTree index build per ``(box, snap)`` — cheap relative to a full pass.
+For each box/camera/field, use the movie driver's grid/projection recipes and
+union the automatic bounds from the first and last requested snapshots.
+Intermediate epochs may exceed these bounds; this is a display-scale scan,
+not a convergence or conservation test. More than two requested snapshots are
+computed, but only the first and last contribute to the saved union.
 
-Everything heavy is **reused**: the geometry index + per-field grid from
-``render_evolution_multi`` (``_index_map`` / ``_field_grid`` / ``FIELD_RECIPE``), the
-off-axis projection and percentile-bound helpers from ``richio.render.yt_backend``
-(``_make_projection`` / ``_auto_bounds`` / ``_sym_bounds``), and the BH-frame loader
-from ``tde_frame`` — so the scanned numbers match what the movies will render.
+Input files
+-----------
+``RUN_DIR`` (positional argument)
+    Top-level or ``snap_<n>/`` HDF5 files named ``snap_<n>.h5`` or
+    ``snap_full_<n>.h5``, or extracted ``snap_<n>/`` NPY directories. The
+    comma-separated ``--snaps`` default is ``21,151``. Requires density,
+    dissipation, temperature, coordinates (default ``CMx,CMy,CMz``) and
+    velocity/internal-energy/pressure/specific-radiation-energy fields for
+    Bernoulli. Missing snapshots are warned about; a single available endpoint
+    supplies its own bounds instead of a union.
+``--boxes``, ``--cameras`` and reference-frame settings
+    Named A/B boxes and canonical/side/top cameras are the defaults; faceon
+    is also available. BH-frame correction is always enabled before
+    ``--switch-snap`` using ``--m-bh``, ``--m-star``, ``--r-star``, ``--beta``.
+    Supply the run's actual frame transition and physical parameters.
 
-Output: a JSON dump plus ready-to-paste ``--vmins``/``--vmaxs`` lines (aligned to the
-field order) for each group config.
+Output files
+------------
+``--out`` (default ``reports/movies/color_ranges.json``)
+    JSON object loaded with ``json.load``; no arrays, maps or movies are saved.
+    Top-level keys are:
 
-Example::
+    ``fields``
+        List of four strings in order: density, dissipation, temperature,
+        bernoulli. All per-field limits follow this order.
+    ``snaps``
+        List of requested integer snapshot numbers, including missing ones.
+    ``res``, ``resolution``
+        Integers: 3-D grid samples per axis and projected-image side in pixels.
+    ``configs``
+        Dictionary keyed by group label, e.g. ``g2_A``, ``g3_side_A``,
+        ``g3_top_A``, ``faceon_A`` and their B equivalents when selected.
+        Each value contains ``box`` and ``camera`` strings plus ``vmins`` and
+        ``vmaxs`` strings, each holding four comma-separated numeric values.
+        Use ``np.fromstring(value, sep=",")`` for ``float64 (4,)`` arrays.
+        Values are linear quantities, not log10: entry 0 density integral in
+        ``g/cm**2``; 1 dissipation integral in ``erg/s/cm**2``; 2
+        density-weighted temperature in ``K``; 3 density-weighted normalized
+        Bernoulli ``B/Delta_epsilon`` (dimensionless). Bernoulli uses symmetric
+        symlog bounds; the other fields use logarithmic colour scales.
 
-    python scan_color_range.py /data1/.../ComptonHiResNewAMR \
-        --res 1024 --resolution 1024 --out reports/movies/color_ranges.json
+Stdout prints scan progress and ``VMINS``/``VMAXS`` strings to pass to
+``render_evolution_multi.py --vmins=... --vmaxs=...``. The JSON does not retain
+per-snapshot bounds or physical run parameters; retain the command alongside it.
+
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` (replace the input path)::
+
+    python works/movies/scan_color_range.py /path/to/run --snaps 21,151 \
+        --res 1024 --resolution 1024 \
+        --out data/processed/Movies/color_ranges.json
+
+Every rerun recomputes the scan and replaces the JSON. Use a distinct output
+path when changing inputs/settings. Endpoint auto-bounds may clip rare pixels;
+the scan does not establish that every pixel is inside the resulting range.
+
+Loading examples
+----------------
+Load field-aligned bounds and construct the corresponding CLI options::
+
+    import json
+    import numpy as np
+
+    with open("data/processed/Movies/color_ranges.json") as stream:
+        scan = json.load(stream)
+    config = scan["configs"]["g3_side_A"]
+    bounds = np.column_stack([
+        np.fromstring(config["vmins"], sep=","),
+        np.fromstring(config["vmaxs"], sep=","),
+    ])  # float64 (4, 2): field rows; columns 0=minimum, 1=maximum
+    for field, (lo, hi) in zip(scan["fields"], bounds):
+        print(field, lo, hi)
+    print(f"--vmins={config['vmins']} --vmaxs={config['vmaxs']}")
 """
 
 import argparse
@@ -26,6 +87,12 @@ import gc
 import json
 import os
 import sys
+from pathlib import Path
+
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 import render_evolution  # BOX_PRESETS, find_snapshots
 import render_evolution_multi as rem  # _index_map, _field_grid, FIELD_RECIPE

@@ -14,8 +14,8 @@
 
 set -euo pipefail
 
-export MPLCONFIGDIR="/tmp/matplotlib-${USER}-${SLURM_JOB_ID}"
-export IPYTHONDIR="/tmp/ipython-${USER}-${SLURM_JOB_ID}"
+export MPLCONFIGDIR="/home/hey4/rich_tde/.cache/matplotlib"
+export IPYTHONDIR="/home/hey4/rich_tde/.cache/ipython/${SLURM_JOB_ID}"
 
 cd /home/hey4/rich_tde
 /home/hey4/.conda/envs/richanalysis/bin/jupyter nbconvert \
@@ -23,4 +23,4 @@ cd /home/hey4/rich_tde
     --execute \
     --inplace \
     --ExecutePreprocessor.timeout=-1 \
-    /home/hey4/rich_tde/works/shock-tde/1.3-nozzle-dissipation-all-analysis.ipynb
+    /home/hey4/rich_tde/works/shock-tde/0.2-nozzle-dissipation-all-analysis.ipynb

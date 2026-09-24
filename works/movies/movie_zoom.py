@@ -1,24 +1,80 @@
 #!/usr/bin/env python3
-"""Geometry helpers for anisotropic ("pencil beam") boxes such as preset C.
+r"""Geometry helpers for narrow transverse boxes with a full line of sight.
 
-A close-up of the pericentre region is **not** a smaller cube.  It keeps the wide
-boxes' full line-of-sight (z) extent and only narrows x and y, so a face-on
-projection integrates *exactly the same column* as the wide views.  The close-up
-is then a true magnification — same physical values, so the wide colour limits
-carry over — and a Rosseland projection stays a real optical depth instead of a
-partial one through a truncated slab.
+A face-on close-up narrows x/y while retaining the wide view's full z extent,
+so the column integral remains comparable. Camera zoom is scaled to frame the
+transverse extent rather than the longest box side. Optional padded x/y cell
+selection reduces grid-building cost for pencil-shaped boxes. Verify that
+padding preserves nearest neighbours for a new run or a sparse region; it is
+an approximation. The framing convention is intended for face-on views.
 
-Two consequences need handling, and that is all this module does:
+Input files
+-----------
+No files are opened by the geometry functions. Movie drivers supply:
 
-* **Framing.** ``richio.render.yt_backend._camera_vectors`` sets the camera width
-  to ``max(domain extent) / zoom``.  For a pencil beam the largest extent is the
-  line of sight, which would frame the beam hundreds of times too wide, so the
-  requested zoom has to be scaled up — see :func:`camera_zoom_for_box`.
-* **Cost.** Building the k-d tree from all ~57 M cells to fill a beam that holds
-  ~12 % of them is wasted single-threaded work — see :func:`box_selection`.
+``box``
+    Six bounds ``[x0,y0,z0,x1,y1,z1]`` in one consistent length unit;
+    ``box_selection`` specifically expects plain RICH code lengths.
+``m_bh``, ``m_star``, ``r_star``, ``beta``
+    Scalar BH/stellar masses and stellar radius in code solar units, and
+    dimensionless penetration factor. Defaults are 1e4, 0.5, 0.47 and 1.
+``snap``, ``coords`` for ``box_selection``
+    A loaded ``richio`` snapshot and a three-string tuple identifying the
+    x/y/z coordinate fields, e.g. ``("CMx", "CMy", "CMz")``. Cell coordinates
+    are unitful arrays of shape ``(N,)``, where ``N`` is the cell count.
 
-Isotropic boxes (A, B) pass through both functions unchanged, so the same code
-path serves every preset.
+Output files
+------------
+No files are written. Functions return these in-memory values:
+
+``tidal_radius(...)``, ``pericentre_radius(...)``
+    Floating-point radius in code length (solar-radius scale): respectively
+    ``R_* (M_BH/M_*)**(1/3)`` and that value divided by ``beta``.
+``box_extent(box)``
+    Three-element tuple ``(dx,dy,dz)`` in the box's length unit.
+``is_pencil(box, ratio=2.0)``
+    Boolean, true when ``dz > ratio * max(dx,dy)``.
+``camera_zoom_for_box(box, zoom)``
+    Dimensionless float ``zoom * max(dx,dy,dz) / max(dx,dy)`` to pass to
+    ``richio.render``. It equals the input zoom for isotropic boxes.
+``box_selection(snap, coords, box, pad_frac=0.25)``
+    Boolean ``ndarray (N,)`` in snapshot cell order; true selects cells inside
+    the padded x/y footprint. z is not cut. Returns ``None`` for non-pencil
+    boxes, meaning use all cells. This mask is not a physical wind selection.
+``scalebar_in_rp(box, zoom, r_p, target_frac=0.2)``
+    Tuple ``(fraction, label)``: dimensionless float fraction of screen width
+    and a math-text string labelled in pericentre radii. Pass the effective
+    zoom from ``camera_zoom_for_box`` and ``r_p`` in the box's length unit.
+
+Usage
+-----
+Import the module from a sibling movie driver. Running it directly performs
+small geometry checks and prints radii, extents, pencil flags, zoom, field of
+view and scale-bar values for presets A/B/C::
+
+    python works/movies/movie_zoom.py
+
+Repeated calls simply recompute their in-memory results; there is no cache or
+resume state.
+
+Loading examples
+----------------
+Use the helper from a notebook or Python session at the repository root::
+
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path("works/movies").resolve()))
+    import movie_zoom
+
+    box = [-35, -35, -1400, 35, 35, 1400]
+    zoom = movie_zoom.camera_zoom_for_box(box, 1.1)
+    rp = movie_zoom.pericentre_radius()
+    fraction, label = movie_zoom.scalebar_in_rp(box, zoom, rp)
+    print(zoom, fraction, label)
+
+For a real snapshot, pass a returned mask to the grid builder's
+``selection`` argument; inspect ``mask.sum()`` and ``mask.shape`` before use.
 """
 
 
@@ -74,8 +130,9 @@ def box_selection(snap, coords, box, pad_frac=0.25):
 
     The margin matters: a grid point just inside the edge may have its true
     nearest cell just *outside*, and cropping without a margin would snap it to
-    the wrong cell.  ``pad_frac`` of the half-width is orders of magnitude larger
-    than any cell in this region, so the mask cannot change the result.
+    the wrong cell. ``pad_frac`` pads by a fraction of the transverse half-width.
+    Compare with the uncropped grid when changing runs or zoom regions; padding
+    alone does not guarantee identical nearest neighbours.
 
     Returns ``None`` for a cube, meaning "use every cell" — the wide presets keep
     their existing nearest-neighbour behaviour exactly.

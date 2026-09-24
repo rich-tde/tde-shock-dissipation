@@ -1,23 +1,66 @@
-"""Render a rotating-camera volume movie of a RICH snapshot.
+r"""Render a rotating-camera movie of one RICH snapshot using local workers.
 
-Depth-cued 3-D volume rendering via :mod:`richio.render` (yt backend). Frames
-are rendered across local CPU workers (``--n-jobs``) — yt's renderer is
-single-threaded, so this is the cheap way to use a multi-core node (e.g. a
-``gpu_strw`` node with 48 cores). For multi-node, see ``render_movie_mpi.py``.
+Nearest-neighbour resampling builds one uniform grid, then ``richio.render``
+uses a rotating camera to make volume-rendered or projected frames. Volume
+opacity is a visual transfer function, not radiative transfer; an unweighted
+projection is a line integral and a weighted projection is a mean. Workers
+parallelize independent frames. Use ``render_movie_mpi.py`` for multiple nodes.
 
-Examples
---------
-Quick local preview (low res / few frames)::
+Input files
+-----------
+``snapshot`` (positional argument)
+    RICH HDF5 file or extracted NPY directory readable by ``richio.load``.
+    Requires ``--field`` (default density) and stored coordinates. No BH-frame
+    correction is applied. ``--box auto`` fits the dense region; ``--box full``
+    uses the snapshot domain. ``--res`` sets the 3-D interpolation resolution.
 
-    python render_volume_movie.py SNAP.h5 --field density \
-        --res 96 --resolution 384 --nframes 36 --out preview.mp4
+Output files
+------------
+``--out`` (default ``render.mp4`` in the working directory)
+    H.264 movie of ``--nframes`` camera angles at ``--fps`` (default 30).
+    Frames depict the same simulation time. ``imageio`` decodes each as
+    ``uint8 (H, W, 3)``: row, column and RGB channels with values 0--255.
+``<frames-dir>/frame_<index:05d>.png``
+    Persistent PNGs; the default directory is ``<out-stem>_frames`` beside the
+    movie. ``index`` is a zero-based camera position. PIL conversion to RGBA
+    gives ``uint8 (H, W, 4)``, channel 3 alpha. ``--resolution`` sets render
+    sampling; optional colourbars add width, and encoding can round dimensions
+    to even pixels. Pixel values are colours, not field values; cgs physical
+    units appear on the optional ``--colorbar`` (density volume:
+    ``g/cm**3``; density projection: ``g/cm**2``). Bounds are linear physical
+    values even for logarithmic display. No numerical map or cube is saved.
 
-Higher-quality, parallel across 24 workers::
+Usage
+-----
+Run from ``/home/hey4/rich_tde`` (replace the input path)::
 
-    python render_volume_movie.py \
-        /data1/projects/pi-rossiem/TDE_data/...HiResNewAMR/snap_18/snap_18.h5 \
+    python works/movies/render_volume_movie.py /path/to/snap_21.h5 \
+        --field density --res 96 --resolution 384 --nframes 36 --colorbar \
+        --out data/processed/Movies/preview.mp4
+    python works/movies/render_volume_movie.py /path/to/snap_21.h5 \
         --field density --res 256 --resolution 1024 --nframes 180 \
-        --n-jobs 24 --out reports/gifs/density_spin.mp4
+        --n-jobs 24 --colorbar --out data/processed/Movies/density_spin.mp4
+
+Existing movies are skipped unless ``--overwrite`` is supplied. Interrupted
+or overwritten runs render all requested frames again. PNGs persist after
+encoding; ``--keep-frames`` remains accepted for compatibility. Use a distinct
+output path for each scientific case/settings combination.
+
+Loading examples
+----------------
+Inspect one movie frame and the corresponding PNG::
+
+    import imageio.v2 as imageio
+    import numpy as np
+    from pathlib import Path
+    from PIL import Image
+
+    root = Path("data/processed/Movies")
+    with imageio.get_reader(root / "preview.mp4") as movie:
+        rgb = movie.get_data(0)  # (H, W, 3), uint8
+        print(movie.get_meta_data(), rgb.shape)
+    with Image.open(root / "preview_frames/frame_00000.png") as image:
+        rgba = np.array(image.convert("RGBA"))  # (H, W, 4), uint8
 """
 
 import argparse
@@ -25,6 +68,11 @@ import os
 import sys
 import time
 from pathlib import Path
+
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+)
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 
 def main(argv=None):
@@ -87,7 +135,16 @@ def main(argv=None):
     p.add_argument("--out", default="render.mp4")
     p.add_argument("--frames-dir", default=None)
     p.add_argument("--keep-frames", action="store_true")
+    p.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace an existing movie and rerender its frames.",
+    )
     args = p.parse_args(argv)
+
+    if Path(args.out).exists() and not args.overwrite:
+        print(f"Skipping existing {args.out}; use --overwrite to replace.", flush=True)
+        return 0
 
     os.environ.setdefault("MPLBACKEND", "Agg")
 
@@ -142,7 +199,8 @@ def main(argv=None):
         fps=args.fps,
         n_jobs=args.n_jobs,
         filename=str(output_path),
-        frames_dir=args.frames_dir,
+        frames_dir=args.frames_dir
+        or str(output_path.with_name(output_path.stem + "_frames")),
         keep_frames=args.keep_frames,
     )
     elapsed = time.time() - render_started
