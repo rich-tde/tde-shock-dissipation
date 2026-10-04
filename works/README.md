@@ -70,6 +70,7 @@ and bound-orbital-energy changes distinct because they answer different question
 | [shock-finder-ediss-selection.py](shock-tde/shock-finder-ediss-selection.py) | Shock detector on chosen snapshots; writes surface-cell results. |
 | [shock-location-slices.py](shock-tde/shock-location-slices.py) | Histograms and locations of detected shock surfaces. |
 | [shock-zoom-caches.py](shock-tde/shock-zoom-caches.py) | Small physical/Mach/geometry NPZ products for presentation notebooks; produces no figures. |
+| [trace-cell-histories.py](shock-tde/trace-cell-histories.py) | Contiguous cell-ID census and compact thermodynamic histories, with optional thermal ranking. |
 | [pw-orbit-nozzle-slice-test.py](shock-tde/pw-orbit-nozzle-slice-test.py) | Ballistic orbit overlays on existing cached nozzle slices. |
 
 We choose between the standard and nozzle-split regions through `Ediss-t.py`,
