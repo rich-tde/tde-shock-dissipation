@@ -100,6 +100,57 @@ together with small field grids that we can load in the presentation notebooks.
 Its opening guide lists every output key and shows how to load and plot the
 arrays; `--list-only` shows the four cases we currently use.
 
+For [thermodynamic trajectories](shock-tde/0.2-thermodynamic-states.ipynb), we
+choose persistent IDs before ranking their late reheating and dissipation.
+In the `1e4` run, 2,712 stellar candidates survive every snapshot from 0 through
+151, spanning 5.80 days. We retain six distinct paths with late reheating factors
+of about 23–68. Their ID list, small history tables and selection metadata are
+in `data/processed/ThermodynamicTracks/1e4/`; the notebook reads those tables
+directly and retains the figures as embedded outputs. These paths follow
+persistent mesh cells; mass exchange means they are not exact fluid-parcel tracks.
+Their BH-frame x–y projections show an outward excursion to 2.63–2.79 AU
+(44–47 pericentre radii), followed by a return inward. At snapshot 151 their
+three-dimensional radii are 0.10–1.12 AU. We correct snapshots 0–20 with the
+simulation's moving-frame orbit and leave later BH-frame positions unchanged;
+the notebook includes the full paths with a pericentre circle, and final x/y/z values.
+
+We also retain all 15,077,536 continuous, physically valid stellar intervals lasting
+at least one fallback time (2.656020589 days) within snapshots 0–151, alongside the
+original six histories. The 70.1 GiB archive, ID list and metadata are
+`one-tfb/{histories.h5,ids.txt,metadata.json}` below the same data directory.
+The notebook plots ten of the 2,712 full-run survivors (`[::270][:10]`) and
+ten of the 205 nozzle candidates (`[::20][:10]`), without additional cuts.
+Full-run endpoints are circles and nozzle endpoints are squares, with matching
+categorical colours in the density–temperature and x–y plots. There are no ID
+legends or population background. Edit `full_run_sample` and `nozzle_sample`
+to choose examples; `read_track(ID)` reads only that cell's rows and returns
+arrays with physical units and BH-centred coordinates.
+The data-directory README also shows direct HDF5 access. Figures stay embedded
+in the notebook; no figure files are exported.
+
+The separate `ThermodynamicTracks/1e4/nozzle/` catalogue contains 205 IDs with
+at least two saved points satisfying `t > 0.5*t_fb`, three-dimensional
+`r < 2*r_p`, and BH-frame `x > 0`; 44 have at least three such points.
+We require a continuous valid history of at least `1.5*t_fb` (3.98 days).
+`ids.txt`, `catalogue.tsv`, and `metadata.json` index the existing archive;
+no histories are copied. The table
+records consecutive near-point counts and time available before/after the
+near-nozzle samples. This is a geometric candidate selection, not a confirmed
+shock classification. Reproduce it with `trace-cell-histories.py nozzle`
+using `--min-duration-tfb 1.5 --after-tfb 0.5 --radius-rp 2 --min-points 2`;
+the script's opening guide gives input/output paths and loading examples.
+Of these 205 cells, 166 have at least two consecutive near-nozzle samples and
+12 have at least three consecutive samples. Tracking after the last near-nozzle
+sample is short: 131 histories end there, and the longest continuation is
+0.080 fallback times. The catalogue mainly covers approach and near-nozzle
+evolution, without sustained downstream tracking.
+
+The highlighted thermodynamic paths use a shared logarithmic colour scale for the corrected
+three-dimensional BH distance. Dashed curves mark LTE radiation–gas pressure
+equality, with EOS gas pressure and radiation pressure `4*sigma_SB*T**4/(3*c)`
+using `unyt` constants. The setup imports the actual local `dev` package so its
+plotting style is applied, including its categorical palette in the x–y plots.
+
 ## Cooling and resolution
 
 We check the nozzle selection and grid resolution before building a time series.
