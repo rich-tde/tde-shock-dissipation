@@ -157,7 +157,8 @@ def selection(
     for run in runs:
         requested_tfbs = REQUESTED_TFBS[run] if use_defaults else (tfbs or [])
         for requested_tfb in requested_tfbs:
-            snapnum, path = SNAPSHOT_TFB(run, requested_tfb)
+            path = SNAPSHOT_TFB(run, requested_tfb)
+            snapnum = int(path.stem.rsplit("_", 1)[-1])
             selected.append(
                 {
                     "run": run,
@@ -167,7 +168,8 @@ def selection(
                     "path": path,
                 }
             )
-        snapnums, paths = DATAPATHS(run)
+        paths = DATAPATHS(run)
+        snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
         available = dict(zip(snapnums, paths))
         for number in snapshots or []:
             selected.append(

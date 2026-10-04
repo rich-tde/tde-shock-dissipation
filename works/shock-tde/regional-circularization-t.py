@@ -207,7 +207,8 @@ def mode_settings(mode):
 
 
 def snapshot_path(run, snapnum):
-    snapnums, paths = DATAPATHS(run)
+    paths = DATAPATHS(run)
+    snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
     matches = [path for number, path in zip(snapnums, paths) if number == snapnum]
     if len(matches) != 1:
         raise ValueError(

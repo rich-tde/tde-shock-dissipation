@@ -231,8 +231,9 @@ def scalar_time(snapshot):
 
 
 def snapshot_path(run, snapnum):
-    snapnums, paths = DATAPATHS(run)
-    return Path(paths[snapnums.index(snapnum)])
+    paths = DATAPATHS(run)
+    snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
+    return paths[snapnums.index(snapnum)]
 
 
 def coordinates(snapshot, path, config):

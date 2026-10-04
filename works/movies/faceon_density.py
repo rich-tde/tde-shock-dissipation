@@ -495,8 +495,8 @@ def main(argv=None) -> int:
     quality = QUALITIES[args.quality]
     field = FIELDS[args.field]
     vmax = field.vmax if args.vmax is None else args.vmax
-    snapnums, paths = DATAPATHS(config.run)
-    paths = [Path(path) for path in paths]
+    paths = DATAPATHS(config.run)
+    snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
     output_dir = args.output_root / quality.name / config.run
     field_dir = output_dir if field.name == "density" else output_dir / field.name
     frames_dir = field_dir / "frames"

@@ -462,7 +462,8 @@ def main(
             )
         snapnums, paths = [int(match.group(1))], [snapshot_file.resolve()]
     else:
-        snapnums, paths = DATAPATHS(run)
+        paths = DATAPATHS(run)
+        snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
     items = list(zip(snapnums, paths))
     if snapshot_index is not None:
         if snapshot_index >= len(items):

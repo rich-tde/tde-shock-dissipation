@@ -293,13 +293,13 @@ def run_worker(
     overwrite: bool,
 ) -> None:
     run = RUN_BY_MODE[mode]
-    snapnums, paths = DATAPATHS(run)
-    if snapshot_index < 0 or snapshot_index >= len(snapnums):
+    paths = DATAPATHS(run)
+    if snapshot_index < 0 or snapshot_index >= len(paths):
         raise typer.BadParameter(
-            f"snapshot-index {snapshot_index} outside 0..{len(snapnums) - 1} for {run}"
+            f"snapshot-index {snapshot_index} outside 0..{len(paths) - 1} for {run}"
         )
-    snapnum = snapnums[snapshot_index]
-    snapshot_path = Path(paths[snapshot_index])
+    snapshot_path = paths[snapshot_index]
+    snapnum = int(snapshot_path.stem.rsplit("_", 1)[-1])
     shape = (resolution, resolution, resolution_z)
     destination = result_path(output_root, run, snapnum, resolution, resolution_z)
     if not overwrite and result_complete(destination, run, snapnum, shape):
@@ -372,7 +372,7 @@ def aggregate(output_root: Path, resolution: int, resolution_z: int) -> list[dic
     missing = []
     invalid = []
     for run in RUN_BY_MODE.values():
-        snapnums, _ = DATAPATHS(run)
+        snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in DATAPATHS(run)]
         expected_names = {
             result_path(output_root, run, snapnum, resolution, resolution_z).name
             for snapnum in snapnums
@@ -406,7 +406,7 @@ def aggregate(output_root: Path, resolution: int, resolution_z: int) -> list[dic
                 rows.append({key: scalar(value) for key, value in row.items()})
     if missing or invalid:
         raise ValueError(f"Missing {len(missing)} and invalid {len(invalid)} results")
-    expected_rows = sum(len(DATAPATHS(run)[0]) for run in RUN_BY_MODE.values()) * len(
+    expected_rows = sum(len(DATAPATHS(run)) for run in RUN_BY_MODE.values()) * len(
         STATISTICS
     )
     if len(rows) != expected_rows:
@@ -565,7 +565,10 @@ def main(
         )
     if action == "worker":
         if snapshot_number is not None:
-            numbers, _ = DATAPATHS(RUN_BY_MODE[mode])
+            numbers = [
+                int(path.stem.rsplit("_", 1)[-1])
+                for path in DATAPATHS(RUN_BY_MODE[mode])
+            ]
             snapshot_index = numbers.index(snapshot_number)
         run_worker(
             mode,

@@ -332,10 +332,10 @@ def main() -> None:
         snapnum = int(re.search(r"(\d+)\.h5$", args.input_file.name).group(1))
         selected = [(snapnum, args.input_file)]
     elif args.snapshot_number:
-        snapnums, paths = DATAPATHS(run)
+        paths = DATAPATHS(run)
+        snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
         selected = [
-            (n, Path(paths[snapnums.index(n)]))
-            for n in dict.fromkeys(args.snapshot_number)
+            (n, paths[snapnums.index(n)]) for n in dict.fromkeys(args.snapshot_number)
         ]
     else:
         snapnums, paths, times = _snapshot_times(run)

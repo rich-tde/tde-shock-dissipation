@@ -259,11 +259,15 @@ def selected_snapshots(
     include_last: bool = False,
 ) -> list[tuple[int, Path, bool]]:
     """Resolve explicit snapshots/times, or the established samples plus last."""
-    snapnums, paths = DATAPATHS(run)
+    paths = DATAPATHS(run)
+    snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
     available = dict(zip(snapnums, paths))
     use_defaults = not snapshots and not tfbs and not include_last
     requested = REQUESTED_TFBS[run] if use_defaults else (tfbs or [])
-    selected = [(*SNAPSHOT_TFB(run, tfb), False) for tfb in requested]
+    selected = [
+        (int(path.stem.rsplit("_", 1)[-1]), path, False)
+        for path in SNAPSHOT_TFB(run, requested)
+    ]
     selected.extend((number, available[number], False) for number in snapshots or [])
     if use_defaults or include_last:
         selected.append((snapnums[-1], paths[-1], True))

@@ -254,11 +254,11 @@ def selected_snapshots(run: str) -> list[tuple[int, Path, bool]]:
     """Return the current NozzleZoomSlices epochs plus the last snapshot."""
 
     selected = [
-        (*SNAPSHOT_TFB(run, requested_tfb), False)
-        for requested_tfb in REQUESTED_TFBS[run]
+        (int(path.stem.rsplit("_", 1)[-1]), path, False)
+        for path in SNAPSHOT_TFB(run, REQUESTED_TFBS[run])
     ]
-    snapnums, paths = DATAPATHS(run)
-    selected.append((snapnums[-1], paths[-1], True))
+    paths = DATAPATHS(run)
+    selected.append((int(paths[-1].stem.rsplit("_", 1)[-1]), paths[-1], True))
 
     deduplicated = {}
     for snapnum, path, is_last in selected:
@@ -800,9 +800,10 @@ def main(
     """Compare percentile-selected columns; write NPZ maps, PNGs and selection CSVs."""
     config = RUNS[mode]
     if snapshot_number:
-        numbers, paths = DATAPATHS(config.run)
+        paths = DATAPATHS(config.run)
+        numbers = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
         selected = [
-            (number, Path(paths[numbers.index(number)]), number == numbers[-1])
+            (number, paths[numbers.index(number)], number == numbers[-1])
             for number in dict.fromkeys(snapshot_number)
         ]
     else:
