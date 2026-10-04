@@ -100,7 +100,7 @@ together with small field grids that we can load in the presentation notebooks.
 Its opening guide lists every output key and shows how to load and plot the
 arrays; `--list-only` shows the four cases we currently use.
 
-For [thermodynamic trajectories](shock-tde/0.2-thermodynamic-states.ipynb), we
+For [thermodynamic trajectories](shock-tde/0.1-track-cell-histories.ipynb), we
 choose persistent IDs before ranking their late reheating and dissipation.
 In the `1e4` run, 2,712 stellar candidates survive every snapshot from 0 through
 151, spanning 5.80 days. We retain six distinct paths with late reheating factors
