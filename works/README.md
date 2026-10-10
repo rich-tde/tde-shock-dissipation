@@ -73,6 +73,23 @@ and bound-orbital-energy changes distinct because they answer different question
 | [trace-cell-histories.py](shock-tde/trace-cell-histories.py) | Contiguous cell-ID census and compact thermodynamic histories, with optional thermal ranking. |
 | [pw-orbit-nozzle-slice-test.py](shock-tde/pw-orbit-nozzle-slice-test.py) | Ballistic orbit overlays on existing cached nozzle slices. |
 
+In [the cell-history notebook](shock-tde/0.1-track-cell-histories.ipynb), we
+compare six thermodynamic shapes after surveying all 15,077,536 archived `1e4`
+histories. The examples show dense and dilute cooling, the warm branch, and
+different reheating sequences against a random background of 100,000 catalogue
+histories. We mark turns with their saved times and BH-frame positions, then compare specific
+energies, gas entropy, gas/radiation temperatures, height, cell mass, and x(t).
+The sign of the stored BH-frame x velocity sets the x(t) line style; persistent
+mesh IDs and changing cell masses do not by themselves establish fluid-parcel
+histories or identify a heating mechanism.
+
+We also compare a hot nozzle approach, a short resolved departure, and a hot
+outgoing start near `1.88 r_p` that lasts another fallback time. The original
+nozzle catalogue chiefly follows the approach; it does not supply a sustained
+downstream passage. Shared point names connect the thermodynamic tracks, time
+series, and orbital plots. The outgoing start does not establish its preceding
+pericentre crossing.
+
 We choose between the standard and nozzle-split regions through `Ediss-t.py`,
 and combine SS24 time-series shards through the same tool that produces them:
 
