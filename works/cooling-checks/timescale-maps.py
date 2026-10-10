@@ -141,7 +141,7 @@ def mode_settings(mode: int):
                         "/data1/projects/pi-rossiem/TDE_data/YujieSnellius/"
                         "R0.47M0.5BH100000beta1S60n1.5ComptonHiResNewAMR"
                     ),
-                    range(70, 150, 10),
+                    range(70, 200, 10),
                 ),
             ),
             "rstar": 0.47 * richio.units.lscale,
