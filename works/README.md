@@ -73,6 +73,16 @@ and bound-orbital-energy changes distinct because they answer different question
 | [trace-cell-histories.py](shock-tde/trace-cell-histories.py) | Contiguous cell-ID census and compact thermodynamic histories, with optional thermal ranking. |
 | [pw-orbit-nozzle-slice-test.py](shock-tde/pw-orbit-nozzle-slice-test.py) | Ballistic orbit overlays on existing cached nozzle slices. |
 
+In [the orbital-energy notebook](shock-tde/0.1-orbital-energy-spread.ipynb), we
+compare stellar-mass distributions in specific orbital energy at `0.2` and `0.5`
+fallback times for the `1e4` and `1e5` runs. We normalize energy by the frozen-in
+spread and transform the bound distributions into Keplerian fallback estimates.
+These estimates describe the instantaneous energy distributions, rather than a
+measured fallback flux. Four figures remain embedded in the notebook, with mass
+accounting and snapshot metadata printed beside the calculations.
+At these epochs, the interval `-10 < epsilon/Delta_epsilon < 5` contains more
+than 99.95% of the selected stellar mass; the low-mass energy tails grow with time.
+
 In [the cell-history notebook](shock-tde/0.1-track-cell-histories.ipynb), we
 compare six thermodynamic shapes after surveying all 15,077,536 archived `1e4`
 histories. The examples show dense and dilute cooling, the warm branch, and
