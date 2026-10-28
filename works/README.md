@@ -184,8 +184,19 @@ We check the nozzle selection and grid resolution before building a time series.
 We compare emission, photon escape and vertical-flow times separately, so that a
 short emission time alone does not stand in for efficient net cooling.
 
+In `0.1-timescales-test.ipynb`, we compare direct vertical lines with nearest XY
+columns on 81 streamline samples in `1e5` snapshot 200 and `1e4` snapshot 151.
+For emission time and optical depth, the adaptive and dense line integrals agree
+closely; XY snapping and coarse Z sampling account for the larger profile
+differences. Extending the vertical
+limit from 10 to 40 pericenter radii barely changes emission times, but changes
+the median escape time by 0.76% and 8.45%, respectively, through the height
+moment. The escape/vertical-time ordering remains unchanged on every sampled
+ray. The executed notebook separates resolution, quadrature, and cutoff effects.
+
 | Tool | Purpose |
 |---|---|
+| [0.1-timescales-test.ipynb](cooling-checks/0.1-timescales-test.ipynb) | Executed line-integral versus nearest-column comparison, with independent XY/Z refinement and vertical-limit tests. |
 | [timescale-maps.py](cooling-checks/timescale-maps.py) | Legacy whole-plane projected timescale maps; definitions differ from the nozzle tools. |
 | [nozzle-selection-validation.py](cooling-checks/nozzle-selection-validation.py) | Compare candidate nozzle selections. |
 | [nozzle-wedge-validation.py](cooling-checks/nozzle-wedge-validation.py) | Check the angular wedge and cache its direction. |

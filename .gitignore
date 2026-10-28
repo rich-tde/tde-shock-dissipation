@@ -200,3 +200,4 @@ reports
 *.orig
 .vscode
 .claude
+works/scratch.ipynb
