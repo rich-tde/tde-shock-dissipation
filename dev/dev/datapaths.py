@@ -35,6 +35,9 @@ DATADIRS = {
         ),
     ),
     "1e6": (
+        Path("/data1/projects/pi-rossiem/TDE_data/R0.47M0.5BH1e+06beta1S50n1.5Compton"),
+    ),
+    "ss24": (
         Path("/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE"),
         Path("/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE4"),
         Path("/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE4_new"),
@@ -47,7 +50,8 @@ TDE_PARAMETERS = {
     "1e4midres": (1e4, 0.5, 0.47),
     "1e4lowres": (1e4, 0.5, 0.47),
     "1e5": (1e5, 0.5, 0.47),
-    "1e6": (1e6, 1.0, 1.0),
+    "1e6": (1e6, 0.5, 0.47),
+    "ss24": (1e6, 1.0, 1.0),
 }
 
 

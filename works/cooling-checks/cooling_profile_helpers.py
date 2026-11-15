@@ -57,23 +57,29 @@ NXY, NZ = 256, 512
 
 Z_HALF_WIDTH_RP = 10
 DZ_MIDPLANE = 0.1  # RICH code-length units; target spacing next to z=0.
-STEAMLINE_INT_RANGE = 600 * u.s  # Stream line integral from - this to + this
-SEED_MIN_RADIUS_RP = 0.7  # Exclude cells closer than this * r_p
+STEAMLINE_INT_RANGE = 700 * u.s  # Stream line integral from - this to + this
+SEED_MIN_RADIUS_RP = (
+    0.7  # For the max density seed, exclude cells closer than this * r_p
+)
 
-# Common elapsed-time grid: 961 points, -600 to +600 s, spacing 1.25 s.
+# Common elapsed-time grid: 2*TIME_NSTEP+1 points
 TIME_NSTEP = 480
-MAX_LSTEP = (0.05 * u.Rsun).in_units(richio.units.lscale)
+MAX_LSTEP = 0.05 * u.Rsun
 
 SLICE_RADIUS_RP = 3
-SLICE_DENSITY_FRACTION = 1e-2  # Require rho > this fraction of the seed density.
+SLICE_DENSITY_FRACTION = 0.6  # Require rho > this fraction of the seed density.
 TAU_CELL_FRACTION = 0.95  # Fraction of the actual upward tau used for N_cells.
 
 PROFILE_FIGSIZE = (9, 4.6)
+ENERGY_PROFILE_FIGSIZE = (6.4, 4.8)
 MASS_PROFILE_FIGSIZE = (8, 3.4)
 TIMESCALE_PROFILE_FIGSIZE = (5.5, 4.2)
 HEIGHT_PROFILE_FIGSIZE = (5.5, 3.0)
 OPTICAL_DEPTH_FIGSIZE = (9, 3.6)
 HEIGHT_SCALING_FIGSIZE = (9, 7.6)
+
+NOZZLE_NXY = (384, 384)
+NOZZLE_FIGSIZE = (5.3, 5.5)
 
 
 # ---------------------------------------------------------------------------- #
@@ -401,16 +407,34 @@ def get_max_density_cell(
     x, y, z = fields["position"].T
     r = np.sqrt(x**2 + y**2 + z**2)
     # Search 0 <= x <= 2 rp, |y| and |z| <= rp, with r >= SEED_MIN_RADIUS_RP * rp.
-    r_box = r_p
     candidate_cells = np.flatnonzero(
-        (x >= 0 * r_box)
-        & (x <= 2 * r_box)
-        & (np.abs(y) <= r_box)
-        & (np.abs(z) <= r_box)
-        & (r >= SEED_MIN_RADIUS_RP * r_box)
+        (x >= 0 * r_p)
+        & (x <= 2 * r_p)
+        & (np.abs(y) <= 2 * r_p)
+        & (np.abs(z) <= r_p)
+        & (r >= SEED_MIN_RADIUS_RP * r_p)
     )
     # Choose the highest-density cell among the candidates.
     seed_cell = candidate_cells[np.argmax(fields["density"][candidate_cells])]
+    return seed_cell
+
+
+def get_max_dissipation_cell(
+    fields: dict[str, u.unyt_array], r_p: u.unyt_quantity
+) -> np.intp:
+    """Return the densest native cell in the ROI outside the seed radius cut."""
+    x, y, z = fields["position"].T
+    r = np.sqrt(x**2 + y**2 + z**2)
+    # Search 0 <= x <= 2 rp, |y| and |z| <= rp, with r >= SEED_MIN_RADIUS_RP * rp.
+    candidate_cells = np.flatnonzero(
+        (x >= 0 * r_p)
+        & (x <= 2 * r_p)
+        & (np.abs(y) <= r_p)
+        & (np.abs(z) <= r_p)
+        & (r >= SEED_MIN_RADIUS_RP * r_p)
+    )
+    # Choose the highest-density cell among the candidates.
+    seed_cell = candidate_cells[np.argmax(fields["dissipation"][candidate_cells])]
     return seed_cell
 
 
@@ -468,6 +492,40 @@ def get_streamline(
         "grid_positions": pos_grid,
         "grid_indices"  : cell_indices,
     }  # fmt:skip
+
+
+def get_nozzle_edge_streamlines(
+    fields: dict[str, u.unyt_array],
+    streamline: dict[str, u.unyt_array | NDArray[np.intp]],
+    r_p: u.unyt_quantity,
+    i_center_cell: int | np.intp,
+    tree: cKDTree,
+) -> u.unyt_array:
+    """Trace the inward/outward edges of the projected launch-seed cloud.
+
+    Reuse the cohort's aperture, hemisphere and density cuts, then project the
+    native seeds onto the main seed's velocity-normal plane. Select the minimum
+    and maximum signed displacement along the BH-to-main-seed radial direction.
+    Extra seeds sampled inside their convex hull cannot extend these extrema.
+
+    Return positions with shape ``(len(streamline['t']), 2, 3)`` in the native
+    length unit; axis 1 is ordered inner, outer. Use the existing nearest-cell
+    midpoint tracer and time samples. These are launch edges, not a guaranteed
+    envelope of the entire advected cohort at later times.
+    """
+    seed_cells = get_nozzle_slice_cells(fields, i_center_cell, r_p)
+    seeds = get_seed_coords_plane(fields, seed_cells, i_center_cell)
+    center = fields["position"][i_center_cell]
+    radial_direction = center / np.linalg.norm(center)
+    radial_offset = (seeds - center) @ radial_direction
+    edge_seeds = seeds[[np.argmin(radial_offset), np.argmax(radial_offset)]]
+
+    paths = u.unyt_array(np.empty((len(streamline["t"]), 2, 3)), seeds.units)
+    for i_time, positions, _ in trace_streamlines(
+        edge_seeds, streamline["t"], tree, fields["velocity"], MAX_LSTEP
+    ):
+        paths[i_time] = positions
+    return paths
 
 
 def compute_energy_fields(
@@ -785,6 +843,63 @@ def add_distance_axis(
 # ---------------------------------------------------------------------------- #
 
 
+def plot_nozzle_geometry(
+    snap: richio.Snapshot,
+    fields: dict[str, u.unyt_array],
+    streamline: dict[str, u.unyt_array | NDArray[np.intp]],
+    r_p: u.unyt_quantity,
+    i_center_cell: int | np.intp,
+    tree: cKDTree,
+) -> tuple[Figure, Axes]:
+    """Overlay the three streamlines on a richio z=0 density slice.
+
+    Fix x/r_p to [-0.5, 1.5] and y/r_p to [-1, 1]. Use richio's default
+    near-plane cell selection and nearest-cell sampling on NOZZLE_NXY.
+    """
+    import dev
+
+    nozzle_paths = get_nozzle_edge_streamlines(
+        fields, streamline, r_p, i_center_cell, tree
+    ).in_units("Rsun")
+    nozzle_main_path = streamline["grid_positions"].in_units("Rsun")
+    positions = fields["position"].in_units("Rsun")
+    box = (np.array([-0.5, -2, 3.5, 2]) * r_p).in_units("Rsun")
+    print("Nozzle: richio z=0 slice; bounds [xmin, ymin, xmax, ymax]:", box)
+    print("Grid:", NOZZLE_NXY, "; spacing:", (box[2:] - box[:2]) / NOZZLE_NXY)
+
+    plt.style.use(dev.path)
+    nozzle_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    fig, ax = plt.subplots(figsize=NOZZLE_FIGSIZE, constrained_layout=True)
+    snap.plots.slice(
+        fields["density"],
+        res=NOZZLE_NXY,
+        X=positions[:, 0],
+        Y=positions[:, 1],
+        Z=positions[:, 2],
+        slice_coord=0 * u.Rsun,
+        box_size=box,
+        ax=ax,
+        colorbar_label=r"$\log_{10}[\rho/(\mathrm{g\,cm^{-3}})]$",
+        workers=WORKERS,
+    )
+    for path, label, color in [
+        (nozzle_main_path, "Main", nozzle_colors[0]),
+        (nozzle_paths[:, 0], "Inner edge", nozzle_colors[1]),
+        (nozzle_paths[:, 1], "Outer edge", nozzle_colors[6]),
+    ]:
+        ax.plot(path[:, 0], path[:, 1], color=color, lw=1.3, label=label)
+    ax.set(
+        xlim=box[[0, 2]],
+        ylim=box[[1, 3]],
+        xlabel=r"$x\ [R_\odot]$",
+        ylabel=r"$y\ [R_\odot]$",
+    )
+    ax.legend(loc="upper left", fontsize=9, frameon=True, framealpha=0.85)
+    plt.show()
+    plt.close(fig)
+    return fig, ax
+
+
 def plot_timescales(
     streamline: dict[str, u.unyt_array | NDArray[np.intp]],
     columns: dict[str, u.unyt_array | NDArray[np.intp] | dict[str, u.unyt_array]],
@@ -879,11 +994,11 @@ def plot_single_cell_energy_density(
     ax.set_ylabel(r"Energy density $[\mathrm{erg\,cm^{-3}}]$")
     # Changes from the first retained upstream particle; orbital energy is signed.
     for field, label, color_index in [
-        (orbital_energy, r"$\Delta u_\mathrm{orb}$", 0),
-        (radiation_energy, r"$\Delta u_\mathrm{rad}$", 1),
-        (internal_energy, r"$\Delta u_\mathrm{int}$", 3),
-        (gas_pressure, r"$\Delta P_\mathrm{gas}$", 4),
-        (radiation_pressure, r"$\Delta P_\mathrm{rad}$", 6),
+        (orbital_energy, r"$u_\mathrm{orb}$", 0),
+        (radiation_energy, r"$u_\mathrm{rad}$", 1),
+        (internal_energy, r"$u_\mathrm{int}$", 3),
+        (gas_pressure, r"$P_\mathrm{gas}$", 4),
+        (radiation_pressure, r"$P_\mathrm{rad}$", 6),
     ]:
         if field is None:
             continue
@@ -933,7 +1048,7 @@ def plot_single_cell_energy_density(
             change,
             color=profile_colors[7],
             linestyle=linestyle,
-            label=r"$\Delta(\rho B)$" + sign_label,
+            label=r"$\rho B$" + sign_label,
         )
     # Overlay the energy accumulated from the first plotted time.
     for profile_ax in (ax, delta_ax):
@@ -963,8 +1078,15 @@ def plot_energy_profile(
     Ediss: u.unyt_array,
     energy_unit: str,
     mass_flux: bool = False,
-) -> tuple[Figure, tuple[Axes, Axes]]:
-    """Plot energies, changes from the first point, and dissipation estimates."""
+    E_circ: u.unyt_quantity | None = None,
+) -> tuple[tuple[Figure, Axes], tuple[Figure, Axes]]:
+    """Return separate energy and change figures, each with its axes.
+
+    Changes are signed differences from the first upstream sample; only the
+    logarithmic energy plot distinguishes positive and negative energies.
+    With E_circ = GM/(4 r_p), changes use circularization units on the left
+    and physical units on a linked right axis.
+    """
     # Express all energy components and cumulative heating in the plot units.
     time_limits = streamline["t"][[0, -1]]
     profile_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
@@ -979,6 +1101,7 @@ def plot_energy_profile(
         )
     }
     Ediss = Ediss.in_units(energy_unit)
+    change_scale = 1 if E_circ is None else E_circ.in_units(energy_unit)
     if energy_unit == "erg/g":
         symbol = r"\varepsilon"
         ylabel = "Specific energy"
@@ -990,8 +1113,11 @@ def plot_energy_profile(
     if mass_flux:
         ylabel = "Mass-flux mean\nspecific energy"
     marker = "o" if len(time_plot) == 1 else None
-    fig, (energy_ax, change_ax) = plt.subplots(
-        1, 2, figsize=PROFILE_FIGSIZE, sharex=True, constrained_layout=True
+    energy_fig, energy_ax = plt.subplots(
+        figsize=ENERGY_PROFILE_FIGSIZE, constrained_layout=True
+    )
+    change_fig, change_ax = plt.subplots(
+        figsize=ENERGY_PROFILE_FIGSIZE, constrained_layout=True
     )
     # Pair each energy profile with its change from the first upstream sample.
     for name, subscript, color_index in [
@@ -1006,18 +1132,16 @@ def plot_energy_profile(
         if name.endswith("_pressure"):
             label = rf"P_\mathrm{{{subscript}}}"
             if energy_unit == "erg/g":
-                label = rf"({label}/\rho)"
-        # Style by the signed orbital energy, including in the change panel.
+                label = rf"{label}/\rho"
+        # The log plot shows orbital magnitude, with line style marking its sign.
         for sign in (-1, 1) if name == "orbital" else (0,):
             plotted = (
                 np.abs(energy_profile) if name == "orbital" else energy_profile.copy()
             )
-            change = energy_profile - energy_profile[0]
             linestyle, sign_label = "-", ""
             if sign:
                 opposite_sign = (energy_profile > 0) != (sign > 0)
                 plotted[opposite_sign] = np.nan
-                change[opposite_sign] = np.nan
                 linestyle = "--" if sign > 0 else "-"
                 sign_label = r" ($+$)" if sign > 0 else r" ($-$)"
             energy_ax.semilogy(
@@ -1031,15 +1155,14 @@ def plot_energy_profile(
                 marker=marker,
                 markersize=3,
             )
-            change_ax.plot(
-                time_plot,
-                change,
-                color=profile_colors[color_index],
-                linestyle=linestyle,
-                label=rf"$\Delta {label}$" + sign_label,
-                marker=marker,
-                markersize=3,
-            )
+        change_ax.plot(
+            time_plot,
+            (energy_profile - energy_profile[0]) / change_scale,
+            color=profile_colors[color_index],
+            label=rf"${label}$",
+            marker=marker,
+            markersize=3,
+        )
     # Sum the signed energy and pressure-work terms to form B or rho B.
     bernoulli = (
         energy["orbital"]
@@ -1052,9 +1175,7 @@ def plot_energy_profile(
     for sign in (-1, 1):
         opposite_sign = (bernoulli > 0) != (sign > 0)
         magnitude = np.abs(bernoulli)
-        change = bernoulli - bernoulli[0]
         magnitude[opposite_sign] = np.nan
-        change[opposite_sign] = np.nan
         linestyle = "--" if sign > 0 else "-"
         sign_label = r" ($+$)" if sign > 0 else r" ($-$)"
         energy_ax.semilogy(
@@ -1065,17 +1186,19 @@ def plot_energy_profile(
             nonpositive="mask",
             label=rf"$|{bernoulli_label}|$" + sign_label,
         )
-        change_ax.plot(
-            time_plot,
-            change,
-            color=profile_colors[7],
-            linestyle=linestyle,
-            label=rf"$\Delta({bernoulli_label})$" + sign_label,
-        )
-    for profile_ax in (energy_ax, change_ax):
+    change_ax.plot(
+        time_plot,
+        (bernoulli - bernoulli[0]) / change_scale,
+        color=profile_colors[7],
+        label=rf"${bernoulli_label}$",
+    )
+    for profile_ax, heating in (
+        (energy_ax, Ediss),
+        (change_ax, Ediss / change_scale),
+    ):
         profile_ax.plot(
             time_plot,
-            Ediss,
+            heating,
             color=profile_colors[5],
             linestyle=":",
             label=r"$E_\mathrm{diss}$",
@@ -1083,21 +1206,41 @@ def plot_energy_profile(
         profile_ax.set_xlim(*time_limits)
         profile_ax.set_xlabel(r"$t\ [\mathrm{s}]$")
         add_distance_axis(profile_ax, streamline)
-        profile_ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncols=2)
+    # Leave space below the energy curves for the legend.
+    energy_ax.set_ylim(bottom=energy_ax.get_ylim()[0] / 10)
+    energy_ax.legend(loc="lower right", ncols=2, fontsize=10)
+    change_ax.legend(loc="upper right", ncols=2, fontsize=10)
     energy_ax.set_ylabel(rf"{ylabel} $[{unit_label}]$")
     change_ax.set_ylabel(rf"{ylabel} change $[{unit_label}]$")
+    if E_circ is not None:
+        change_ax.set_ylabel(rf"{ylabel} change $/ [GM/(4r_p)]$")
+        # Matplotlib's axis transform requires a numerical conversion factor.
+        energy_cgs = E_circ.to_value(energy_unit)
+        change_ax.tick_params(axis="y", which="both", right=False)
+        right = change_ax.secondary_yaxis(
+            "right",
+            functions=(lambda y: y * energy_cgs, lambda y: y / energy_cgs),
+        )
+        right.set_ylabel(rf"{ylabel} change $[{unit_label}]$")
+        offset = right.yaxis.get_offset_text()
+        offset.set_transform(
+            offset.get_transform()
+            + ScaledTranslation(0, 16 / 72, change_fig.dpi_scale_trans)
+        )
     # Show energy gains and losses on a symmetric scale.
     change_limit = max(abs(limit) for limit in change_ax.get_ylim())
     change_ax.set_ylim(-change_limit, change_limit)
     plt.show()
-    plt.close(fig)
-    return fig, (energy_ax, change_ax)
+    plt.close(energy_fig)
+    plt.close(change_fig)
+    return (energy_fig, energy_ax), (change_fig, change_ax)
 
 
 def plot_single_cell_specific_energy(
     streamline: dict[str, u.unyt_array | NDArray[np.intp]],
     single: dict[str, u.unyt_array | dict[str, u.unyt_array]],
-) -> tuple[Figure, tuple[Axes, Axes]]:
+    E_circ: u.unyt_quantity | None = None,
+) -> tuple[tuple[Figure, Axes], tuple[Figure, Axes]]:
     """Plot native-cell energies per gram along the central streamline."""
     return plot_energy_profile(
         streamline,
@@ -1105,13 +1248,15 @@ def plot_single_cell_specific_energy(
         single["specific"],
         single["Ediss_specific"],
         "erg/g",
+        E_circ=E_circ,
     )
 
 
 def plot_slice_specific_energy(
     streamline: dict[str, u.unyt_array | NDArray[np.intp]],
     slices: dict[str, u.unyt_array | dict[str, u.unyt_array]],
-) -> tuple[Figure, tuple[Axes, Axes]]:
+    E_circ: u.unyt_quantity | None = None,
+) -> tuple[tuple[Figure, Axes], tuple[Figure, Axes]]:
     """Fixed initial-mass mean of specific energies along the advected cohort."""
     return plot_energy_profile(
         streamline,
@@ -1119,13 +1264,14 @@ def plot_slice_specific_energy(
         slices["specific"],
         slices["Ediss_specific"],
         "erg/g",
+        E_circ=E_circ,
     )
 
 
 def plot_slice_energy_density(
     streamline: dict[str, u.unyt_array | NDArray[np.intp]],
     slices: dict[str, u.unyt_array | dict[str, u.unyt_array]],
-) -> tuple[Figure, tuple[Axes, Axes]]:
+) -> tuple[tuple[Figure, Axes], tuple[Figure, Axes]]:
     """Fixed initial-mass mean of energy densities along the advected cohort."""
     return plot_energy_profile(
         streamline,
@@ -1170,7 +1316,7 @@ def plot_slice_mass_and_flux(
 def plot_flux_specific_energy(
     streamline: dict[str, u.unyt_array | NDArray[np.intp]],
     flux: dict[str, u.unyt_array | dict[str, u.unyt_array]],
-) -> tuple[Figure, tuple[Axes, Axes]]:
+) -> tuple[tuple[Figure, Axes], tuple[Figure, Axes]]:
     """Advected-surface sum(U v dot dA) / net Mdot, retaining signed orientation."""
     return plot_energy_profile(
         streamline,
