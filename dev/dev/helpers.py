@@ -249,3 +249,13 @@ def reference_frame_offset(t, Mbh, Mstar, Rstar, beta):
     Rt = Rstar * (Mbh / Mstar) ** (1 / 3)
     Rp = Rt / beta
     return get_true_anomaly(t, Mbh, Rp)
+
+
+def positions_and_time(snap):
+    """Cell positions and code time for HDF5 or extracted NPY snapshots."""
+    import richio
+
+    if isinstance(snap, richio.data.SnapshotNPY):
+        time = snap.tfb.to_value(richio.units.tscale) * richio.units.tscale
+        return snap.cm_x, snap.cm_y, snap.cm_z, time
+    return snap.X, snap.Y, snap.Z, snap.t.reshape(-1)[0]

@@ -20,6 +20,8 @@ Input files
 
 Repeat ``--data-dir`` for relocated copies with the same stellar/BH parameters.
 Directory names and plain/full snapshot naming control the frame correction.
+Directories with no HDF5 snapshots are read as extracted NPY ``snap_<n>``
+folders (``CMx/CMy/CMz``, ``tfb``), assumed already in the BH frame.
 The historical ``TEMPTDE4`` cutoff is >=826: snapshots 820--825 from both
 restart directories remain in this diagnostic.
 
@@ -143,7 +145,7 @@ class Regions(str, Enum):
 
 
 def snapshot_number(path: Path) -> int:
-    return int(re.fullmatch(r"snap_(?:full_)?(\d+)\.h5", path.name).group(1))
+    return int(re.fullmatch(r"snap_(?:full_)?(\d+)(?:\.h5)?", path.name).group(1))
 
 
 def selected_files(datadirs, stride, start, end, npoints, fallback_time, minimum_tfb):
@@ -158,7 +160,10 @@ def selected_files(datadirs, stride, start, end, npoints, fallback_time, minimum
             ),
             key=snapshot_number,
         )
-        for path in (full + plain)[::stride]:
+        npy = sorted(
+            (p for p in directory.glob("snap_*") if p.is_dir()), key=snapshot_number
+        )
+        for path in (full + plain or npy)[::stride]:
             number = snapshot_number(path)
             if start <= number <= end and not (
                 directory.name == "TEMPTDE4" and number >= 826
@@ -325,16 +330,14 @@ def main(
             remaining[number] -= 1
             continue
         snap = richio.load(path)
-        time = snap.t.reshape(-1)[0]
+        x, y, z, time = dev.positions_and_time(snap)
         tfb = time / fallback_time
         r_a = r_p if time < 0 else r_amin * tfb ** (2 / 3)
         needs_switch = (
-            # Legacy SS24 restart layout; the current 1e6 run uses plain/full naming.
             path.parent.name == "TEMPTDE"
             if path.parent.name.startswith("TEMPTDE")
             else bool(re.fullmatch(r"snap_\d+\.h5", path.name))
         )
-        x, y = snap.X, snap.Y
         if needs_switch:
             offset = dev.reference_frame_offset(
                 t=time, Mbh=mbh, Mstar=mstar, Rstar=rstar, beta=1
@@ -345,10 +348,7 @@ def main(
             number,
             time,
             tfb,
-            *(
-                np.sum(power[mask])
-                for mask in region_masks(x, y, snap.Z, r_p, r_a, regions)
-            ),
+            *(np.sum(power[mask]) for mask in region_masks(x, y, z, r_p, r_a, regions)),
         )
         for column, value in zip(columns, values):
             column.append(value)

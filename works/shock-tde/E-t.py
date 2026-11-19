@@ -24,7 +24,9 @@ The defaults under ``/data1/projects/pi-rossiem/TDE_data`` are:
 These correspond to BH masses ``1e4``, ``1e5`` and ``1e6`` solar masses, all
 with M=0.5, R=0.47. The SS24 1e6 table is kept as ``E-t-ss24.txt``. Repeat
 ``--data-dir`` for relocated copies of the same run. Preserve directory and
-plain/full snapshot naming: they determine frame corrections. ``TEMPTDE4``
+plain/full snapshot naming: they determine frame corrections. Directories
+with no HDF5 snapshots are read as extracted NPY ``snap_<n>`` folders
+(``CMx/CMy/CMz``, ``tfb``), assumed already in the BH frame. ``TEMPTDE4``
 snapshots >=820 are excluded in favour of the high-resolution restart.
 
 Output files
@@ -255,12 +257,15 @@ def main(
             plain_snap_files,
             key=lambda f: int(re.search(r"snap_(\d+)\.h5", f).group(1)),
         )
+        snap_files = snap_files or sorted(
+            filter(os.path.isdir, glob.glob(os.path.join(data_directory, "snap_*"))),
+            key=lambda f: int(re.search(r"snap_(\d+)$", f).group(1)),
+        )
 
         for snap_file in snap_files[::cadence]:
-            try:
-                snapnum = int(re.search(r"snap_full_(\d+)\.h5", snap_file).group(1))
-            except AttributeError:
-                snapnum = int(re.search(r"snap_(\d+)\.h5", snap_file).group(1))
+            snapnum = int(
+                re.search(r"snap_(?:full_)?(\d+)(?:\.h5)?$", snap_file).group(1)
+            )
 
             if not start_snapshot <= snapnum <= end_snapshot:
                 continue
@@ -275,13 +280,9 @@ def main(
                 continue
 
             snap = richio.load(snap_file)
-            try:
-                t = snap.t[0]
-            except IndexError:
-                t = snap.t
+            x, y, z, t = dev.positions_and_time(snap)
             tfb = t / tmin
 
-            # Legacy SS24 restart layout; the current 1e6 run uses plain/full naming.
             if os.path.basename(data_directory).startswith("TEMPTDE"):
                 needs_switch = os.path.basename(data_directory) == "TEMPTDE"
             else:
@@ -297,16 +298,13 @@ def main(
                     Rstar=stellar_radius,
                     beta=1,
                 )
-                x = snap.X + frame_offset[0]
-                y = snap.Y + frame_offset[1]
+                x = x + frame_offset[0]
+                y = y + frame_offset[1]
                 velocity_x = snap.vx + frame_offset[2]
                 velocity_y = snap.vy + frame_offset[3]
             else:
-                x = snap.X
-                y = snap.Y
                 velocity_x = snap.vx
                 velocity_y = snap.vy
-            z = snap.Z
             velocity_z = snap.vz
 
             radius = np.sqrt(x**2 + y**2 + z**2)
