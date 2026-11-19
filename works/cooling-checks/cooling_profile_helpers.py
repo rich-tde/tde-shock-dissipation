@@ -863,7 +863,7 @@ def plot_nozzle_geometry(
     ).in_units("Rsun")
     nozzle_main_path = streamline["grid_positions"].in_units("Rsun")
     positions = fields["position"].in_units("Rsun")
-    box = (np.array([-0.5, -2, 3.5, 2]) * r_p).in_units("Rsun")
+    box = (np.array([-3, -4, 5, 4]) * r_p).in_units("Rsun")
     print("Nozzle: richio z=0 slice; bounds [xmin, ymin, xmax, ymax]:", box)
     print("Grid:", NOZZLE_NXY, "; spacing:", (box[2:] - box[:2]) / NOZZLE_NXY)
 
