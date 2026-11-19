@@ -35,7 +35,7 @@ DATADIRS = {
         ),
     ),
     "1e6": (
-        Path("/data1/projects/pi-rossiem/TDE_data/R0.47M0.5BH1e+06beta1S50n1.5Compton"),
+        Path("/data1/projects/pi-rossiem/TDE_data/R0.47M0.5BH1e+06beta1S50n1.5ComptonMG"),
     ),
     "ss24": (
         Path("/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE"),
