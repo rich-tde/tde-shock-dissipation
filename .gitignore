@@ -198,6 +198,6 @@ logs
 reports
 *.txt
 *.orig
-.vscode
-.claude
 works/scratch.ipynb
+.*
+!.gitignore
