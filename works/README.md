@@ -178,6 +178,48 @@ equality, with EOS gas pressure and radiation pressure `4*sigma_SB*T**4/(3*c)`
 using `unyt` constants. The setup imports the actual local `dev` package so its
 plotting style is applied, including its categorical palette in the x–y plots.
 
+## Dynamics and fallback
+
+In [the fallback-rate notebook](dynamics/0.1-fallbackrate.ipynb), we compare the
+signed pericenter flux at all 577 cached snapshots with the orbital-energy
+prediction at about `0.5 t_fb`, a fiducial multiple-return rate
+`sum(M_b(t/n)/n)`, a capped energy-loss model, and its circularization cutoff
+variant. All three original figures retain these five curves on the same
+signed logarithmic axes. All multiple-return models retain the mass (`f = 1`).
+The loss model removes `delta_epsilon = chi * GM/(4*r_p)` per return and uses
+the arrival-time Jacobian to convert the ballistic rate. It stops losing energy
+at binding `epsilon_c = GM/(4*r_p)` but keeps counting subsequent crossings at
+the final period; initially deeper bins keep their original period. The model
+does not include accretion.
+
+The cutoff curve has its own independently fitted `chi`.
+It keeps the final dissipating passage and excludes later circulation.
+This is a useful precursor to a dissipation calculation: future power would
+weight each crossing by `min(delta_epsilon, max(epsilon_c - epsilon_in, 0))`,
+where `epsilon_in` is its incoming positive binding energy. No luminosity has
+been calculated.
+
+We fit each model's `chi` separately for each run, with equal snapshot
+weights in linear rate after
+`0.5 t_fb`, without amplitude or time shifts. A scan of `[0, 1]` in steps of
+0.001 followed by refinement of every sampled local minimum gives capped-loss
+`chi = 0.01832 / 0.10721 / 0.05094` for 1e4/1e5/1e6, with relative RMS
+`2.43% / 11.53% / 14.08%`, versus `11.22% / 27.34% / 44.50%` for the fiducial
+model. Shorter periods improve the agreement in all three runs. Keeping
+circulation accounts for gas that still crosses the measuring plane after
+circularization. The capped curves extend through `3 t_fb`. We invert the
+arrival map on the original 400 cached energy-time knots plus cap-transition
+knots and evaluate the piecewise Jacobian; independent inversions and finer
+sampling give consistent results.
+
+The independently fitted cutoff model gives
+`chi = 0.018320 / 0.108024 / 0.485409`, with relative RMS
+`2.43% / 11.68% / 13.97%`. Its 1e6 fit is influenced by the hard cutoff:
+the best value places the third-return onset just beyond the final measured
+time. A local minimum at `chi = 0.05141` has a similar `14.27%` residual.
+The notebook prints the best candidate minima and plots each model with its
+own fitted value through `3 t_fb`.
+
 ## Cooling and resolution
 
 We check the nozzle selection and grid resolution before building a time series.
