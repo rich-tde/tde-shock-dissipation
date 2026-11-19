@@ -19,9 +19,10 @@ The defaults under ``/data1/projects/pi-rossiem/TDE_data`` are:
 * ``--mode 1``: ``NewSnellius/R0.47M0.5BH10000beta1S60ComptonHiRes``.
 * ``--mode 2``: ``YujieSnellius/`` followed by
   ``R0.47M0.5BH100000beta1S60n1.5ComptonHiResNewAMR``.
-* ``--mode 3``: ``SS24_diag/TEMPTDE``, ``TEMPTDE4`` and ``TEMPTDE4_new``.
+* ``--mode 3``: ``R0.47M0.5BH1e+06beta1S50n1.5ComptonMG``.
 
-These correspond to BH masses ``1e4``, ``1e5`` and ``1e6`` solar masses. Repeat
+These correspond to BH masses ``1e4``, ``1e5`` and ``1e6`` solar masses, all
+with M=0.5, R=0.47. The SS24 1e6 table is kept as ``E-t-ss24.txt``. Repeat
 ``--data-dir`` for relocated copies of the same run. Preserve directory and
 plain/full snapshot naming: they determine frame corrections. ``TEMPTDE4``
 snapshots >=820 are excluded in favour of the high-resolution restart.
@@ -170,14 +171,12 @@ def main(
     elif mode == 3:
         # 1e6
         data_directories = (
-            "/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE",
-            "/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE4",
-            "/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE4_new",
+            "/data1/projects/pi-rossiem/TDE_data/R0.47M0.5BH1e+06beta1S50n1.5ComptonMG",
         )
         output_file = "/home/hey4/rich_tde/data/processed/SimpleTimeseries/E-t-1e6.txt"
         cadence = 1
-        stellar_radius = 1 * richio.units.lscale
-        stellar_mass = 1 * richio.units.mscale
+        stellar_radius = 0.47 * richio.units.lscale
+        stellar_mass = 0.5 * richio.units.mscale
         black_hole_mass = 1e6 * richio.units.mscale
     else:
         raise ValueError("Invalid mode. Please choose 1, 2, or 3.")
@@ -282,7 +281,8 @@ def main(
                 t = snap.t
             tfb = t / tmin
 
-            if mode == 3:
+            # Legacy SS24 restart layout; the current 1e6 run uses plain/full naming.
+            if os.path.basename(data_directory).startswith("TEMPTDE"):
                 needs_switch = os.path.basename(data_directory) == "TEMPTDE"
             else:
                 needs_switch = bool(

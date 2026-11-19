@@ -12,8 +12,9 @@ Input files
 -----------
 ``snap_full_<n>.h5`` and ``snap_<n>.h5``
     Read with ``richio.load`` from ``dev.datapaths.DATADIRS``. Modes 1/2/3
-    select the ``1e4`` NewSnellius, ``1e5`` YujieSnellius and ``1e6`` SS24
-    runs, respectively, under ``/data1/projects/pi-rossiem/TDE_data``.
+    select the ``1e4`` NewSnellius, ``1e5`` YujieSnellius and ``1e6``
+    ``R0.47M0.5BH1e+06beta1S50n1.5ComptonMG`` runs, respectively, under
+    ``/data1/projects/pi-rossiem/TDE_data``. All three use M=0.5, R=0.47.
     Required fields: ``X/Y/Z``, ``Time``, ``Dissipation`` and ``Volume``.
     ``--npoints`` also reads the HDF5 ``Time`` dataset to select samples.
 
@@ -328,8 +329,9 @@ def main(
         tfb = time / fallback_time
         r_a = r_p if time < 0 else r_amin * tfb ** (2 / 3)
         needs_switch = (
+            # Legacy SS24 restart layout; the current 1e6 run uses plain/full naming.
             path.parent.name == "TEMPTDE"
-            if mode == 3
+            if path.parent.name.startswith("TEMPTDE")
             else bool(re.fullmatch(r"snap_\d+\.h5", path.name))
         )
         x, y = snap.X, snap.Y
