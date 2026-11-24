@@ -9,7 +9,7 @@
 #SBATCH --mem=64G
 #SBATCH --time=08:00:00
 
-# Usage: sbatch jobs/submit-cell-histories.sh scan|extract|census|nozzle [analysis options]
+# Usage: sbatch jobs/submit-cell-histories.sh census|extract|nozzle [analysis options]
 # The archive-only nozzle selection needs one CPU (--cpus-per-task=1).
 # The inexpensive select stage can run directly in the analysis environment.
 set -euo pipefail
