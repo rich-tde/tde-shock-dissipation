@@ -69,13 +69,13 @@ Loading examples
 ----------------
 Load the output of the snapshot-77 command above and plot linear density::
 
-    from pathlib import Path
+    import os
     import dev  # Apply the repository plot style before importing pyplot.
     import matplotlib.pyplot as plt
     import numpy as np
 
-    root = Path("data/processed/NozzleZoomSlices/1e4/grids")
-    with np.load(root / "nozzle_zoom_snap_0077_768.npz") as data:
+    root = "data/processed/NozzleZoomSlices/1e4/grids"
+    with np.load(os.path.join(root, "nozzle_zoom_snap_0077_768.npz")) as data:
         x, y = data["x_rp"], data["y_rp"]
         density = 10.0 ** data["density"]
         time_tfb = data["time_tfb"].item()
@@ -93,11 +93,14 @@ import math
 import os
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
@@ -109,14 +112,14 @@ import dev
 import matplotlib.pyplot as plt
 import numpy as np
 import typer
-from dev.datapaths import TDE_PARAMETERS
+from dev.datapaths import TDE_PARAMETERS, snapshot_number
 from richio.plots import scalar_map
 
 import richio
 from dev import DATAPATHS, SNAPSHOT_TFB
 
-REPO = Path("/home/hey4/rich_tde")
-OUTPUT_ROOT = REPO / "data/processed/NozzleZoomSlices"
+REPO = "/home/hey4/rich_tde"
+OUTPUT_ROOT = os.path.join(REPO, "data/processed/NozzleZoomSlices")
 WINDOW = (-1.0, 2.0, -1.5, 1.5)
 REQUESTED_TFBS = {
     "1e4": (0.5, 1.0, 1.5, 2.0),
@@ -196,30 +199,32 @@ def selected_snapshots(
     snapshots: list[int] | None = None,
     tfbs: list[float] | None = None,
     include_last: bool = False,
-) -> list[tuple[int, Path, bool]]:
+) -> list[tuple[int, str, bool]]:
     """Resolve explicit snapshots/times, or the established samples plus last."""
     paths = DATAPATHS(run)
-    snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
+    snapnums = [snapshot_number(path) for path in paths]
     available = dict(zip(snapnums, paths))
     use_defaults = not snapshots and not tfbs and not include_last
     requested = REQUESTED_TFBS[run] if use_defaults else (tfbs or [])
     selected = [
-        (int(path.stem.rsplit("_", 1)[-1]), path, False)
-        for path in SNAPSHOT_TFB(run, requested)
+        (snapshot_number(path), path, False) for path in SNAPSHOT_TFB(run, requested)
     ]
     selected.extend((number, available[number], False) for number in snapshots or [])
     if use_defaults or include_last:
         selected.append((snapnums[-1], paths[-1], True))
     # Several requested times can resolve to the same snapshot.
-    unique = {number: (number, Path(path), last) for number, path, last in selected}
+    unique = {
+        number: (number, os.path.normpath(path), last)
+        for number, path, last in selected
+    }
     return list(unique.values())
 
 
-def needs_reference_frame(run: str, path: Path) -> bool:
+def needs_reference_frame(run: str, path: str) -> bool:
     """Match the dataset-specific coordinate switch used by ``E-t.py``."""
     if run == "1e6":
-        return path.parent.name == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", path.name) is not None
+        return os.path.basename(os.path.dirname(path)) == "TEMPTDE"
+    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
 
 
 def scalar_time(snapshot):
@@ -231,8 +236,8 @@ def positive_log10(values) -> np.ndarray:
     return np.log10(np.where(np.isfinite(values) & (values > 0), values, np.nan))
 
 
-def cache_complete(path: Path, resolution: int) -> bool:
-    if not path.is_file() or path.stat().st_size == 0:
+def cache_complete(path: str, resolution: int) -> bool:
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
         return False
     try:
         with np.load(path) as data:
@@ -250,8 +255,8 @@ def cache_complete(path: Path, resolution: int) -> bool:
 
 
 def cache_snapshot(
-    path: Path,
-    output: Path,
+    path: str,
+    output: str,
     config: RunConfig,
     resolution: int,
     workers: int,
@@ -295,14 +300,14 @@ def cache_snapshot(
     arrays["vx_kms"] = snap.vx[indices].to_value("km/s")
     arrays["vy_kms"] = snap.vy[indices].to_value("km/s")
 
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_suffix(".tmp")
-    with temporary.open("wb") as stream:
+    os.makedirs(os.path.dirname(output), exist_ok=True)
+    temporary = os.path.splitext(output)[0] + ".tmp"
+    with open(temporary, "wb") as stream:
         np.savez_compressed(stream, **arrays)
-    temporary.replace(output)
+    os.replace(temporary, output)
 
 
-def common_limits(cache_paths: list[Path]) -> dict[str, tuple[float, float]]:
+def common_limits(cache_paths: list[str]) -> dict[str, tuple[float, float]]:
     limits = {}
     for name, *_ in FIELDS:
         finite_parts = []
@@ -325,8 +330,8 @@ def common_limits(cache_paths: list[Path]) -> dict[str, tuple[float, float]]:
 
 
 def render_figure(
-    cache_path: Path,
-    destination: Path,
+    cache_path: str,
+    destination: str,
     snapnum: int,
     is_last: bool,
     config: RunConfig,
@@ -376,7 +381,7 @@ def render_figure(
         ax.set_ylabel(r"$y/r_p$")
 
     fig.tight_layout()
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
     fig.savefig(destination, dpi=dpi)
     plt.close(fig)
 
@@ -395,7 +400,7 @@ def main(
     resolution: int = typer.Option(768, min=16, help="Pixels along each slice axis"),
     workers: int = typer.Option(8, min=1, help="KD-tree query threads"),
     dpi: int = typer.Option(240, min=50, help="Output PNG resolution"),
-    output_root: Path = typer.Option(OUTPUT_ROOT, help="Study output directory"),
+    output_root: str = typer.Option(OUTPUT_ROOT, help="Study output directory"),
     overwrite: bool = typer.Option(False, help="Recompute cached grids and figures"),
     rerender: bool = typer.Option(
         False, help="Redraw figures from existing cached grids"
@@ -407,8 +412,8 @@ def main(
     """Cache and plot XY nozzle density, pressure, temperature and dissipation."""
     config = mode_settings(mode)
     selected = selected_snapshots(config.run, snapshot, tfb, include_last)
-    output_dir = output_root / config.run
-    cache_dir = output_dir / "grids"
+    output_dir = os.path.join(output_root, config.run)
+    cache_dir = os.path.join(output_dir, "grids")
 
     for snapnum, path, is_last in selected:
         print(f"[{config.run}] snap {snapnum}: {path}{' (last)' if is_last else ''}")
@@ -418,7 +423,9 @@ def main(
     cache_paths = []
     rebuilt = False
     for snapnum, path, _ in selected:
-        cache_path = cache_dir / f"nozzle_zoom_snap_{snapnum:04d}_{resolution}.npz"
+        cache_path = os.path.join(
+            cache_dir, f"nozzle_zoom_snap_{snapnum:04d}_{resolution}.npz"
+        )
         cache_paths.append(cache_path)
         if overwrite or not cache_complete(cache_path, resolution):
             print(f"[{config.run}] gridding snap {snapnum}", flush=True)
@@ -429,15 +436,15 @@ def main(
 
     limits = common_limits(cache_paths)
     for (snapnum, _, is_last), cache_path in zip(selected, cache_paths):
-        destination = output_dir / f"nozzle_zoom_snap_{snapnum:04d}.png"
+        destination = os.path.join(output_dir, f"nozzle_zoom_snap_{snapnum:04d}.png")
         if (
-            destination.is_file()
-            and destination.stat().st_size > 0
+            os.path.isfile(destination)
+            and os.path.getsize(destination) > 0
             and not overwrite
             and not rerender
             and not rebuilt
         ):
-            print(f"[{config.run}] exists {destination.name}", flush=True)
+            print(f"[{config.run}] exists {os.path.basename(destination)}", flush=True)
             continue
         print(f"[{config.run}] rendering snap {snapnum}", flush=True)
         render_figure(cache_path, destination, snapnum, is_last, config, limits, dpi)

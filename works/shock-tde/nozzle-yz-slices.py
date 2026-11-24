@@ -106,13 +106,13 @@ Loading examples
 ----------------
 Plot the linear vertical Mach proxy from the snapshot-77 output::
 
-    from pathlib import Path
+    import os
     import dev
     import matplotlib.pyplot as plt
     import numpy as np
 
-    root = Path("data/processed/NozzleYZSlices/1e4/grids")
-    with np.load(root / "nozzle_yz_snap_0077_768.npz") as data:
+    root = "data/processed/NozzleYZSlices/1e4/grids"
+    with np.load(os.path.join(root, "nozzle_yz_snap_0077_768.npz")) as data:
         y, z = data["y_rsun"], data["z_rsun"]
         mach = data["abs_vz_mach_proxy"]
         time_tfb = data["time_tfb"].item()
@@ -130,11 +130,14 @@ import math
 import os
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
@@ -147,15 +150,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import typer
 import unyt as u
-from dev.datapaths import TDE_PARAMETERS
+from dev.datapaths import TDE_PARAMETERS, snapshot_number
 from richio.plots import scalar_map
 from scipy.integrate import solve_ivp
 
 import richio
 from dev import DATAPATHS, SNAPSHOT_TFB
 
-REPO = Path("/home/hey4/rich_tde")
-OUTPUT_ROOT = REPO / "data/processed/NozzleYZSlices"
+REPO = "/home/hey4/rich_tde"
+OUTPUT_ROOT = os.path.join(REPO, "data/processed/NozzleYZSlices")
 REQUESTED_TFBS = {
     "1e4": (0.5, 1.0, 1.5, 2.0),
     "1e5": (0.3, 0.5),
@@ -257,29 +260,29 @@ def selected_snapshots(
     snapshots: list[int] | None = None,
     tfbs: list[float] | None = None,
     include_last: bool = False,
-) -> list[tuple[int, Path, bool]]:
+) -> list[tuple[int, str, bool]]:
     """Resolve explicit snapshots/times, or the established samples plus last."""
     paths = DATAPATHS(run)
-    snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
+    snapnums = [snapshot_number(path) for path in paths]
     available = dict(zip(snapnums, paths))
     use_defaults = not snapshots and not tfbs and not include_last
     requested = REQUESTED_TFBS[run] if use_defaults else (tfbs or [])
     selected = [
-        (int(path.stem.rsplit("_", 1)[-1]), path, False)
+        (snapshot_number(path), path, False)
         for path in SNAPSHOT_TFB(run, requested)
     ]
     selected.extend((number, available[number], False) for number in snapshots or [])
     if use_defaults or include_last:
         selected.append((snapnums[-1], paths[-1], True))
     # Several requested times can resolve to the same snapshot.
-    unique = {number: (number, Path(path), last) for number, path, last in selected}
+    unique = {number: (number, path, last) for number, path, last in selected}
     return list(unique.values())
 
 
-def needs_reference_frame(run: str, path: Path) -> bool:
+def needs_reference_frame(run: str, path: str) -> bool:
     if run == "1e6":
-        return path.parent.name == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", path.name) is not None
+        return os.path.basename(os.path.dirname(path)) == "TEMPTDE"
+    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
 
 
 def scalar_time(snapshot):
@@ -372,11 +375,11 @@ def returning_orbit_grid(
     return phi_grid, orbit_x_rp, orbit_y_rp
 
 
-def orbit_cache_complete(path: Path, resolution: int) -> bool:
+def orbit_cache_complete(path: str, resolution: int) -> bool:
     fields = [name for name, *_ in BROAD_FIELDS]
     axes = ["phi", "z_rsun", "orbit_x_rp", "orbit_y_rp"]
     flow = ["dphi_dt", "dz_rsun_dt"]
-    if not path.is_file() or path.stat().st_size == 0:
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
         return False
     try:
         with np.load(path) as data:
@@ -393,8 +396,8 @@ def orbit_cache_complete(path: Path, resolution: int) -> bool:
 
 
 def cache_orbit_snapshot(
-    path: Path,
-    output: Path,
+    path: str,
+    output: str,
     config: RunConfig,
     resolution: int,
     workers: int,
@@ -486,11 +489,11 @@ def cache_orbit_snapshot(
     arrays["dphi_dt"] = (tangent_speed / ds_dphi[:, None]).to_value("1/s")
     arrays["dz_rsun_dt"] = (snap.vz[indices] / r_sun).to_value("1/s")
 
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_suffix(".tmp")
-    with temporary.open("wb") as stream:
+    os.makedirs(os.path.dirname(output), exist_ok=True)
+    temporary = os.path.splitext(output)[0] + ".tmp"
+    with open(temporary, "wb") as stream:
         np.savez_compressed(stream, **arrays)
-    temporary.replace(output)
+    os.replace(temporary, output)
 
 
 def grid_indices(
@@ -518,7 +521,7 @@ def grid_indices(
 
 
 def cache_complete(
-    path: Path,
+    path: str,
     resolution: int,
     y_center_rsun: float | None = None,
     box_scale: float | None = None,
@@ -527,7 +530,7 @@ def cache_complete(
     grids += ["vy_kms", "vz_stream_kms"]
     grids += [name for name, *_ in DIAGNOSTIC_FIELDS]
     axes = ["y_rsun", "z_rsun"]
-    if not path.is_file() or path.stat().st_size == 0:
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
         return False
     try:
         with np.load(path) as data:
@@ -555,8 +558,8 @@ def cache_complete(
 
 
 def cache_snapshot(
-    path: Path,
-    output: Path,
+    path: str,
+    output: str,
     config: RunConfig,
     resolution: int,
     workers: int,
@@ -615,15 +618,15 @@ def cache_snapshot(
     arrays["abs_vz_kms"] = positive_log10(np.abs(vz.to("km/s")))
     arrays["sound_speed_kms"] = positive_log10(cs.to("km/s"))
 
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_suffix(".tmp")
-    with temporary.open("wb") as stream:
+    os.makedirs(os.path.dirname(output), exist_ok=True)
+    temporary = os.path.splitext(output)[0] + ".tmp"
+    with open(temporary, "wb") as stream:
         np.savez_compressed(stream, **arrays)
-    temporary.replace(output)
+    os.replace(temporary, output)
 
 
 def logarithmic_limits(
-    cache_paths: list[Path], fields
+    cache_paths: list[str], fields
 ) -> dict[str, tuple[float, float]]:
     limits = {}
     for name, *_ in fields:
@@ -645,7 +648,7 @@ def logarithmic_limits(
     return limits
 
 
-def diagnostic_limits(cache_paths: list[Path]) -> dict[str, tuple[float, float]]:
+def diagnostic_limits(cache_paths: list[str]) -> dict[str, tuple[float, float]]:
     limits = logarithmic_limits(
         cache_paths, [field for field in DIAGNOSTIC_FIELDS if field[-1]]
     )
@@ -653,7 +656,7 @@ def diagnostic_limits(cache_paths: list[Path]) -> dict[str, tuple[float, float]]
     return limits
 
 
-def render_broad(cache_path: Path, destination: Path, limits, dpi: int) -> None:
+def render_broad(cache_path: str, destination: str, limits, dpi: int) -> None:
     with np.load(cache_path) as data:
         y_rsun = data["y_rsun"]
         z_rsun = data["z_rsun"]
@@ -704,12 +707,12 @@ def render_broad(cache_path: Path, destination: Path, limits, dpi: int) -> None:
         ax.set_xlabel(r"$y/R_\odot$")
     for ax in axes[:, 0]:
         ax.set_ylabel(r"$z/R_\odot$")
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
     fig.savefig(destination, dpi=dpi)
     plt.close(fig)
 
 
-def render_diagnostics(cache_path: Path, destination: Path, limits, dpi: int) -> None:
+def render_diagnostics(cache_path: str, destination: str, limits, dpi: int) -> None:
     with np.load(cache_path) as data:
         y_rsun = data["y_rsun"]
         z_rsun = data["z_rsun"]
@@ -747,7 +750,7 @@ def render_diagnostics(cache_path: Path, destination: Path, limits, dpi: int) ->
         ax.set_xlabel(r"$y/R_\odot$")
     for ax in axes[:, 0]:
         ax.set_ylabel(r"$z/R_\odot$")
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
     fig.savefig(destination, dpi=dpi)
     plt.close(fig)
 
@@ -772,7 +775,7 @@ def main(
         1.0, min=0.001, help="Multiply the standard YZ box half-widths by this factor."
     ),
     dpi: int = typer.Option(240, min=50, help="Output PNG resolution"),
-    output_root: Path = typer.Option(OUTPUT_ROOT, help="Study output directory"),
+    output_root: str = typer.Option(OUTPUT_ROOT, help="Study output directory"),
     overwrite: bool = typer.Option(False, help="Recompute cached grids and figures"),
     rerender: bool = typer.Option(
         False, help="Redraw figures from existing cached grids"
@@ -784,8 +787,8 @@ def main(
     """Cache and plot YZ nozzle physical fields and vertical-flow diagnostics."""
     config = mode_settings(mode)
     selected = selected_snapshots(config.run, snapshot, tfb, include_last)
-    output_dir = output_root / config.run
-    cache_dir = output_dir / "grids"
+    output_dir = os.path.join(output_root, config.run)
+    cache_dir = os.path.join(output_dir, "grids")
 
     for snapnum, path, is_last in selected:
         print(f"[{config.run}] snap {snapnum}: {path}{' (last)' if is_last else ''}")
@@ -795,7 +798,7 @@ def main(
     cache_paths = []
     rebuilt = False
     for snapnum, path, _ in selected:
-        cache_path = cache_dir / f"nozzle_yz_snap_{snapnum:04d}_{resolution}.npz"
+        cache_path = os.path.join(cache_dir, f"nozzle_yz_snap_{snapnum:04d}_{resolution}.npz")
         cache_paths.append(cache_path)
         if overwrite or not cache_complete(
             cache_path, resolution, y_center_rsun, box_scale
@@ -811,17 +814,17 @@ def main(
     broad_limits = logarithmic_limits(cache_paths, BROAD_FIELDS)
     diagnostic_color_limits = diagnostic_limits(cache_paths)
     for (snapnum, _, _), cache_path in zip(selected, cache_paths):
-        broad = output_dir / f"nozzle_yz_snap_{snapnum:04d}.png"
-        diagnostics = output_dir / f"nozzle_yz_diagnostics_snap_{snapnum:04d}.png"
+        broad = os.path.join(output_dir, f"nozzle_yz_snap_{snapnum:04d}.png")
+        diagnostics = os.path.join(output_dir, f"nozzle_yz_diagnostics_snap_{snapnum:04d}.png")
         for destination, renderer, limits in (
             (broad, render_broad, broad_limits),
             (diagnostics, render_diagnostics, diagnostic_color_limits),
         ):
-            exists = destination.is_file() and destination.stat().st_size > 0
+            exists = os.path.isfile(destination) and os.path.getsize(destination) > 0
             if exists and not overwrite and not rerender and not rebuilt:
-                print(f"[{config.run}] exists {destination.name}", flush=True)
+                print(f"[{config.run}] exists {os.path.basename(destination)}", flush=True)
                 continue
-            print(f"[{config.run}] rendering {destination.name}", flush=True)
+            print(f"[{config.run}] rendering {os.path.basename(destination)}", flush=True)
             renderer(cache_path, destination, limits, dpi)
 
 

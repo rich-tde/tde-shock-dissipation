@@ -56,11 +56,11 @@ Loading examples
 ----------------
 Use a local loader from the repository root without changing global richio::
 
+    import os
     import sys
-    from pathlib import Path
     import richio
 
-    sys.path.insert(0, str(Path("works/movies").resolve()))
+    sys.path.insert(0, os.path.realpath("works/movies"))
     import tde_frame
 
     load_bh = tde_frame.make_bh_frame_loader(

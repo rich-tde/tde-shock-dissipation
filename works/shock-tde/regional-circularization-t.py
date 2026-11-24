@@ -100,11 +100,11 @@ Loading examples
 ----------------
 Load regional curves and compare their sum with the saved total::
 
-    from pathlib import Path
+    import os
     import numpy as np
 
-    root = Path("data/processed/RegionalCircularization/1e4")
-    table = np.loadtxt(root / "regional-chi-1e4.txt", ndmin=2)
+    root = "data/processed/RegionalCircularization/1e4"
+    table = np.loadtxt(os.path.join(root, "regional-chi-1e4.txt"), ndmin=2)
     assert table.shape[1] == 16
     time_tfb = table[:, 3]
     power_erg_s = table[:, 6:10]  # (N, 4): pericenter, outgoing, incoming, outer
@@ -115,7 +115,7 @@ Load regional curves and compare their sum with the saved total::
 
 Load the fallback rate used to construct those curves::
 
-    fallback = np.loadtxt(root / "fallback-late-snap056.txt", ndmin=2)
+    fallback = np.loadtxt(os.path.join(root, "fallback-late-snap056.txt"), ndmin=2)
     return_time_days = fallback[:, 0]  # (2048,)
     mdot_msun_per_year = fallback[:, 5]  # Smoothed rate, (2048,).
 
@@ -132,7 +132,6 @@ Make a compact plot of one regional result::
 
 import os
 import re
-from pathlib import Path
 
 import numpy as np
 import typer
@@ -141,20 +140,24 @@ from loguru import logger
 from scipy.ndimage import gaussian_filter1d
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 
-from dev.datapaths import DATAPATHS
+from dev.datapaths import DATAPATHS, snapshot_number
 
 import dev
 import richio
 
 app = typer.Typer(add_completion=False)
 
-REPO = Path("/home/hey4/rich_tde")
-EDISS_DIR = REPO / "data/processed/SimpleTimeseries"
-OUTPUT_ROOT = REPO / "data/processed/RegionalCircularization"
-SS24_FALLBACK_DIR = REPO / "data/processed/SS24-circularization-t"
+REPO = "/home/hey4/rich_tde"
+EDISS_DIR = os.path.join(REPO, "data/processed/SimpleTimeseries")
+OUTPUT_ROOT = os.path.join(REPO, "data/processed/RegionalCircularization")
+SS24_FALLBACK_DIR = os.path.join(REPO, "data/processed/SS24-circularization-t")
 
 FALLBACK_BINS = 2048
 FALLBACK_SMOOTHING_BINS = 3.0
@@ -208,7 +211,7 @@ def mode_settings(mode):
 
 def snapshot_path(run, snapnum):
     paths = DATAPATHS(run)
-    snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
+    snapnums = [snapshot_number(path) for path in paths]
     matches = [path for number, path in zip(snapnums, paths) if number == snapnum]
     if len(matches) != 1:
         raise ValueError(
@@ -225,8 +228,8 @@ def snapshot_time(snapshot):
 
 
 def bh_frame(snapshot, path, time, cfg):
-    plain_snapshot = re.fullmatch(r"snap_\d+\.h5", path.name) is not None
-    needs_switch = path.parent.name == "TEMPTDE" or (
+    plain_snapshot = re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
+    needs_switch = os.path.basename(os.path.dirname(path)) == "TEMPTDE" or (
         cfg["run"] != "1e6" and plain_snapshot
     )
     if not needs_switch:
@@ -317,7 +320,7 @@ def save_fallback_profile(path, snapnum, time, specific_energy, cell_mass, cfg):
     mdot_smooth = (u.unyt_array(dmdenergy_smooth, dmdenergy_unit) * dedt).to("Msun/yr")
 
     order = np.argsort(return_time)
-    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary = path + ".tmp"
     u.savetxt(
         temporary,
         arrays=[
@@ -357,12 +360,12 @@ def validate_fallback(path):
 def fallback_paths(cfg, output_root=OUTPUT_ROOT, ss24_fallback_dir=SS24_FALLBACK_DIR):
     if cfg["run"] == "1e6":
         return {
-            "early": ss24_fallback_dir / "fallback-rate-snap239-0.40d.txt",
-            "late": ss24_fallback_dir / "fallback-rate-snap712-23.17d.txt",
+            "early": os.path.join(ss24_fallback_dir, "fallback-rate-snap239-0.40d.txt"),
+            "late": os.path.join(ss24_fallback_dir, "fallback-rate-snap712-23.17d.txt"),
         }
-    output_dir = output_root / cfg["run"]
+    output_dir = os.path.join(output_root, cfg["run"])
     return {
-        epoch: output_dir / f"fallback-{epoch}-snap{snapnum:03d}.txt"
+        epoch: os.path.join(output_dir, f"fallback-{epoch}-snap{snapnum:03d}.txt")
         for epoch, snapnum in cfg["fallback_snapshots"].items()
     }
 
@@ -379,7 +382,7 @@ def build_fallback_profiles(
 
     for epoch, snapnum in cfg["fallback_snapshots"].items():
         output = paths[epoch]
-        if output.exists() and not overwrite:
+        if os.path.exists(output) and not overwrite:
             validate_fallback(output)
             logger.info("Reusing {}", output)
             continue
@@ -395,8 +398,8 @@ def build_fallback_profiles(
 
 
 def load_ediss(cfg, ediss_dir=EDISS_DIR):
-    path = ediss_dir / f"Ediss-t-{cfg['run']}-final.txt"
-    with path.open() as handle:
+    path = os.path.normpath(os.path.join(ediss_dir, f"Ediss-t-{cfg['run']}-final.txt"))
+    with open(path) as handle:
         header = handle.readline().lstrip("# ").split()
     if header != "SNAPNUM TIME TFALLBACK EDISS1 EDISS2 EDISS3 EDISS4".split():
         raise ValueError(f"{path} is not a standard-region Ediss table")
@@ -469,8 +472,8 @@ def save_regional_chi(cfg, paths, ediss_dir=EDISS_DIR, output_root=OUTPUT_ROOT):
         np.sum(powers[good_early], axis=1) / normalization_early[good_early]
     )
 
-    output = output_root / cfg["run"] / f"regional-chi-{cfg['run']}.txt"
-    temporary = output.with_suffix(output.suffix + ".tmp")
+    output = os.path.join(output_root, cfg["run"], f"regional-chi-{cfg['run']}.txt")
+    temporary = output + ".tmp"
     arrays = [
         raw[:, 0].astype(int),
         raw[:, 1],
@@ -520,14 +523,14 @@ def save_regional_chi(cfg, paths, ediss_dir=EDISS_DIR, output_root=OUTPUT_ROOT):
 @app.command()
 def main(
     mode: int = typer.Option(..., min=1, max=3, help="1: 1e4, 2: 1e5, 3: 1e6"),
-    ediss_dir: Path = typer.Option(
+    ediss_dir: str = typer.Option(
         EDISS_DIR, help="Directory with standard-region Ediss-t-<run>-final.txt tables."
     ),
-    ss24_fallback_dir: Path = typer.Option(
+    ss24_fallback_dir: str = typer.Option(
         SS24_FALLBACK_DIR,
         help="Directory with precomputed mode-3 SS24 fallback profiles.",
     ),
-    output_root: Path = typer.Option(
+    output_root: str = typer.Option(
         OUTPUT_ROOT, help="Root for per-run fallback and regional-chi tables."
     ),
     overwrite: bool = typer.Option(False, help="Recompute an existing chi table."),
@@ -537,13 +540,13 @@ def main(
 ):
     """Normalize existing regional Ediss-t powers by a dynamical fallback rate."""
     cfg = mode_settings(mode)
-    destination = output_root / cfg["run"] / f"regional-chi-{cfg['run']}.txt"
-    if destination.exists() and not (overwrite or overwrite_fallback):
+    destination = os.path.join(output_root, cfg["run"], f"regional-chi-{cfg['run']}.txt")
+    if os.path.exists(destination) and not (overwrite or overwrite_fallback):
         logger.info(
             "Existing chi table retained: {}; use --overwrite to replace", destination
         )
         return
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
     paths = build_fallback_profiles(
         cfg, overwrite_fallback, output_root, ss24_fallback_dir
     )

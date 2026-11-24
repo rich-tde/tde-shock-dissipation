@@ -80,7 +80,6 @@ import glob
 import os
 import re
 from collections import Counter
-from pathlib import Path
 
 import numpy as np
 import typer
@@ -88,7 +87,11 @@ import unyt as u
 from loguru import logger
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 
 import dev
@@ -100,10 +103,10 @@ app = typer.Typer(add_completion=False)
 @app.command()
 def main(
     mode: int = typer.Option(..., min=1, max=3, help="1: 1e4, 2: 1e5, 3: 1e6 Msun."),
-    data_dir: list[Path] | None = typer.Option(
+    data_dir: list[str] | None = typer.Option(
         None, help="Repeat for relocated copies of this mode's run/restart directories."
     ),
-    output: Path | None = typer.Option(
+    output: str | None = typer.Option(
         None,
         help="Override the output table; use a fresh path for a changed selection.",
     ),
@@ -164,9 +167,9 @@ def main(
     else:
         raise ValueError("Invalid mode. Please choose 1, 2, or 3.")
 
-    DATADIRS = tuple(str(p) for p in data_dir) if data_dir else DATADIRS
-    OUTPUT_FILE = str(output) if output is not None else OUTPUT_FILE
-    Path(OUTPUT_FILE).parent.mkdir(parents=True, exist_ok=True)
+    DATADIRS = tuple(os.path.normpath(p) for p in data_dir) if data_dir else DATADIRS
+    OUTPUT_FILE = os.path.normpath(output) if output is not None else OUTPUT_FILE
+    os.makedirs(os.path.dirname(OUTPUT_FILE) or ".", exist_ok=True)
     NCADENCE = stride
 
     r_amin = Rstar * (Mbh / Mstar) ** (2 / 3)
@@ -189,8 +192,8 @@ def main(
     columns = [snapnums, ts, tfbs, Rdiss_vec_xs, Rdiss_vec_ys, Rdiss_vec_zs, Rdisss]
     if (
         not overwrite
-        and Path(OUTPUT_FILE).exists()
-        and Path(OUTPUT_FILE).stat().st_size
+        and os.path.exists(OUTPUT_FILE)
+        and os.path.getsize(OUTPUT_FILE)
     ):
         with open(OUTPUT_FILE) as handle:
             header = handle.readline().lstrip("# ").split()

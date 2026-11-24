@@ -219,10 +219,9 @@ The archive avoids rescanning the large raw snapshots in a notebook::
 
 Load the smaller selected histories directly::
 
-    from pathlib import Path
-    root = Path("data/processed/ThermodynamicTracks/1e4")
-    ids = np.loadtxt(root / "selected_ids.txt", dtype=np.uint64, ndmin=1)
-    history = np.loadtxt(root / "histories" / f"history_{int(ids[0])}.txt", ndmin=2)
+    root = "data/processed/ThermodynamicTracks/1e4"
+    ids = np.loadtxt(os.path.join(root, "selected_ids.txt"), dtype=np.uint64, ndmin=1)
+    history = np.loadtxt(os.path.join(root, "histories", f"history_{int(ids[0])}.txt"), ndmin=2)
     time = u.unyt_array(history[:, 1], richio.units.get_unit("Time")).to("day")
     rho = u.unyt_array(history[:, 2], richio.units.get_unit("Density")).to("g/cm**3")
     temperature = u.unyt_array(history[:, 3], "K")
@@ -231,7 +230,7 @@ Load the smaller selected histories directly::
 Read one of the unranked, one-fallback-time intervals::
 
     import h5py
-    with h5py.File(root / "one-tfb/histories.h5") as archive:
+    with h5py.File(os.path.join(root, "one-tfb", "histories.h5")) as archive:
         start, stop = archive["offsets"][:2]
         rows = archive["values"][start:stop]
         indices = archive["snapshot_index"][start:stop]
@@ -251,7 +250,6 @@ import os
 import shutil
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
-from pathlib import Path
 
 import h5py
 import numpy as np
@@ -575,33 +573,34 @@ class CandidatePools:
 
 
 def _write_json(path, value):
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
-    temporary.replace(path)
+    temporary = path + ".tmp"
+    with open(temporary, "w") as stream:
+        stream.write(json.dumps(value, indent=2, allow_nan=False) + "\n")
+    os.replace(temporary, path)
 
 
 def _write_candidates(path, rows):
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with temporary.open("w", newline="") as stream:
+    temporary = path + ".tmp"
+    with open(temporary, "w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=COLUMNS, delimiter="\t")
         writer.writeheader()
         writer.writerows(rows)
-    temporary.replace(path)
+    os.replace(temporary, path)
 
 
 def _catalogue(args):
-    from dev.datapaths import DATAPATHS
+    from dev.datapaths import DATAPATHS, snapshot_number
 
     paths = [
         path
         for path in DATAPATHS(args.run)
         if args.start_snapshot
-        <= int(path.stem.rsplit("_", 1)[-1])
+        <= snapshot_number(path)
         <= args.stop_snapshot
     ][:: args.snapshot_step]
     if not paths:
         raise ValueError("No snapshots match the requested selection")
-    snapshots = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
+    snapshots = [snapshot_number(path) for path in paths]
     return paths, snapshots
 
 
@@ -613,15 +612,15 @@ def _manifest(args, paths, snapshots, ids=None):
     }
     settings["sources"] = [
         {
-            "path": str(path.resolve()),
-            "size": path.stat().st_size,
-            "mtime_ns": path.stat().st_mtime_ns,
+            "path": os.path.realpath(path),
+            "size": os.stat(path).st_size,
+            "mtime_ns": os.stat(path).st_mtime_ns,
         }
         for path in paths
     ]
     if ids is not None:
         settings["ids"] = [int(value) for value in ids]
-        settings["ids_file"] = str(args.ids_file.resolve())
+        settings["ids_file"] = os.path.realpath(args.ids_file)
     metadata = {
         "schema_version": 1,
         "settings": settings,
@@ -631,25 +630,26 @@ def _manifest(args, paths, snapshots, ids=None):
         "workers": args.workers,
         "progress": [],
     }
-    target = args.output_dir / "metadata.json"
-    if target.exists() and not args.overwrite:
-        previous = json.loads(target.read_text())
+    target = os.path.join(args.output_dir, "metadata.json")
+    if os.path.exists(target) and not args.overwrite:
+        with open(target) as stream:
+            previous = json.load(stream)
         if (
             previous.get("settings") == settings
             and previous.get("status") == "complete"
         ):
             if args.command == "scan":
-                expected = [args.output_dir / "candidates.tsv"]
+                expected = [os.path.join(args.output_dir, "candidates.tsv")]
             elif args.command == "census":
                 expected = [
-                    args.output_dir / name for name in ("histories.h5", "ids.txt")
+                    os.path.join(args.output_dir, name) for name in ("histories.h5", "ids.txt")
                 ]
             else:
                 expected = [
-                    args.output_dir / "histories.npz",
-                    *(args.output_dir / f"history_{int(value)}.txt" for value in ids),
+                    os.path.join(args.output_dir, "histories.npz"),
+                    *(os.path.join(args.output_dir, f"history_{int(value)}.txt") for value in ids),
                 ]
-            if all(path.exists() for path in expected):
+            if all(os.path.exists(path) for path in expected):
                 print(
                     f"Matching completed results exist in {args.output_dir}; skipping",
                     flush=True,
@@ -658,7 +658,7 @@ def _manifest(args, paths, snapshots, ids=None):
         raise FileExistsError(
             f"Existing/incomplete results differ; use --overwrite: {target}"
         )
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
     _write_json(target, metadata)
     return metadata
 
@@ -711,8 +711,8 @@ def scan(args, executor):
             "eligible_completed_intervals": pools.total,
         }
         metadata["progress"].append(progress)
-        _write_json(args.output_dir / "metadata.json", metadata)
-        _write_candidates(args.output_dir / "candidates.tsv", pools.rows())
+        _write_json(os.path.join(args.output_dir, "metadata.json"), metadata)
+        _write_candidates(os.path.join(args.output_dir, "candidates.tsv"), pools.rows())
         print(json.dumps(progress), flush=True)
     end = len(paths) - 1
     stellar = valid & (stats[:, 6] >= args.min_star) & (stats[:, 7] <= removed_limit)
@@ -721,7 +721,7 @@ def scan(args, executor):
     rows = np.flatnonzero((end - starts + 1 >= args.min_snapshots) & stellar)
     pools.add(old_ids, starts, stats, rows, end, snapshots, times)
     candidates = pools.rows()
-    _write_candidates(args.output_dir / "candidates.tsv", candidates)
+    _write_candidates(os.path.join(args.output_dir, "candidates.tsv"), candidates)
     metadata.update(
         {
             "status": "complete",
@@ -734,7 +734,7 @@ def scan(args, executor):
             "times_code": times,
         }
     )
-    _write_json(args.output_dir / "metadata.json", metadata)
+    _write_json(os.path.join(args.output_dir, "metadata.json"), metadata)
     print(
         f"Completed scan: {len(candidates)} candidates; output {args.output_dir}",
         flush=True,
@@ -919,7 +919,7 @@ def census(args, executor):
             "seconds": time.monotonic() - tick,
         }
         metadata["progress"].append(progress)
-        _write_json(args.output_dir / "metadata.json", metadata)
+        _write_json(os.path.join(args.output_dir, "metadata.json"), metadata)
         print(json.dumps(progress), flush=True)
     rows = np.flatnonzero(times[-1] - times[starts] >= duration)
     candidate_ids.append(old_ids[rows])
@@ -937,11 +937,11 @@ def census(args, executor):
     metadata["candidate_unique_ids"] = len(np.unique(ids))
     metadata["presence_elapsed_seconds"] = time.monotonic() - started
     print(f"Presence census complete: {len(ids)} candidate intervals", flush=True)
-    _write_json(args.output_dir / "metadata.json", metadata)
+    _write_json(os.path.join(args.output_dir, "metadata.json"), metadata)
 
-    work_path = args.output_dir / ".census-candidates.h5.tmp"
-    targets_path = args.output_dir / ".census-targets.u64.tmp"
-    archive_path = args.output_dir / "histories.h5.tmp"
+    work_path = os.path.join(args.output_dir, ".census-candidates.h5.tmp")
+    targets_path = os.path.join(args.output_dir, ".census-targets.u64.tmp")
+    archive_path = os.path.join(args.output_dir, "histories.h5.tmp")
     valid_starts = np.full(len(ids), -1, dtype=np.int32)
     finished = []
     with h5py.File(work_path, "w") as work:
@@ -971,7 +971,7 @@ def census(args, executor):
                     for _, (found_ids, found_values) in _rank_results(
                         path,
                         layouts[index][0],
-                        (str(targets_path), len(targets)),
+                        (targets_path, len(targets)),
                         executor,
                         args.workers,
                     ):
@@ -1006,7 +1006,7 @@ def census(args, executor):
                     "seconds": time.monotonic() - tick,
                 }
                 metadata["progress"].append(progress)
-                _write_json(args.output_dir / "metadata.json", metadata)
+                _write_json(os.path.join(args.output_dir, "metadata.json"), metadata)
                 print(json.dumps(progress), flush=True)
             ended = _advance_valid(
                 valid_starts,
@@ -1034,12 +1034,13 @@ def census(args, executor):
             tfb,
             args.min_duration_tfb,
         )
-    archive_path.replace(args.output_dir / "histories.h5")
-    work_path.unlink()
-    targets_path.unlink(missing_ok=True)
+    os.replace(archive_path, os.path.join(args.output_dir, "histories.h5"))
+    os.remove(work_path)
+    if os.path.exists(targets_path):
+        os.remove(targets_path)
     unique_ids = np.unique(ids[intervals[:, 0]])
     np.savetxt(
-        args.output_dir / "ids.txt",
+        os.path.join(args.output_dir, "ids.txt"),
         unique_ids,
         fmt="%d",
         header="Every ID with a valid stellar interval lasting at least the requested fallback-time duration",
@@ -1053,7 +1054,7 @@ def census(args, executor):
             "samples": int(offsets[-1]),
         }
     )
-    _write_json(args.output_dir / "metadata.json", metadata)
+    _write_json(os.path.join(args.output_dir, "metadata.json"), metadata)
     print(
         f"Completed census: {len(intervals)} qualifying intervals, {len(unique_ids)} IDs; "
         f"output {args.output_dir}",
@@ -1095,7 +1096,7 @@ def extract(args, executor):
             "seconds": time.monotonic() - tick,
         }
         metadata["progress"].append(progress)
-        _write_json(args.output_dir / "metadata.json", metadata)
+        _write_json(os.path.join(args.output_dir, "metadata.json"), metadata)
         print(json.dumps(progress), flush=True)
     header = (
         "snapshot time_code rho_code T_K dissipation_code star was_removed "
@@ -1107,13 +1108,13 @@ def extract(args, executor):
             (np.asarray(snapshots)[mask], times[mask], data[mask, column])
         )
         np.savetxt(
-            args.output_dir / f"history_{int(particle_id)}.txt",
+            os.path.join(args.output_dir, f"history_{int(particle_id)}.txt"),
             values,
             header=header,
             fmt=["%d"] + ["%.17g"] * (len(EXTRACT_FIELDS) + 1),
         )
     np.savez_compressed(
-        args.output_dir / "histories.npz",
+        os.path.join(args.output_dir, "histories.npz"),
         ids=ids,
         snapshots=np.asarray(snapshots, dtype=np.int32),
         time_code=times,
@@ -1130,7 +1131,7 @@ def extract(args, executor):
             },
         }
     )
-    _write_json(args.output_dir / "metadata.json", metadata)
+    _write_json(os.path.join(args.output_dir, "metadata.json"), metadata)
     print(f"Completed extraction: {len(ids)} IDs; output {args.output_dir}", flush=True)
 
 
@@ -1141,9 +1142,10 @@ def select(args):
 
     import richio
 
-    source_metadata = args.input_dir / "metadata.json"
-    archive_path = args.input_dir / "histories.npz"
-    source = json.loads(source_metadata.read_text())
+    source_metadata = os.path.join(args.input_dir, "metadata.json")
+    archive_path = os.path.join(args.input_dir, "histories.npz")
+    with open(source_metadata) as stream:
+        source = json.load(stream)
     if (
         source["status"] != "complete"
         or not source["selection_is_every_catalogue_snapshot"]
@@ -1280,25 +1282,26 @@ def select(args):
     }
     settings["sources"] = [
         {
-            "path": str(path.resolve()),
-            "size": path.stat().st_size,
-            "mtime_ns": path.stat().st_mtime_ns,
+            "path": os.path.realpath(path),
+            "size": os.stat(path).st_size,
+            "mtime_ns": os.stat(path).st_mtime_ns,
         }
         for path in (source_metadata, archive_path)
     ]
-    destination = args.output_dir / "selection.json"
-    if destination.exists() and not args.overwrite:
-        previous = json.loads(destination.read_text())
+    destination = os.path.join(args.output_dir, "selection.json")
+    if os.path.exists(destination) and not args.overwrite:
+        with open(destination) as stream:
+            previous = json.load(stream)
         expected = [
-            args.output_dir / "selected_ids.txt",
-            args.output_dir / "candidates_summary.tsv",
+            os.path.join(args.output_dir, "selected_ids.txt"),
+            os.path.join(args.output_dir, "candidates_summary.tsv"),
             *(
-                args.output_dir / "histories" / f"history_{value}.txt"
+                os.path.join(args.output_dir, "histories", f"history_{value}.txt")
                 for value in selected_ids
             ),
         ]
         if previous.get("settings") == settings and all(
-            path.exists() for path in expected
+            os.path.exists(path) for path in expected
         ):
             print(
                 f"Matching selection exists in {args.output_dir}; skipping", flush=True
@@ -1307,21 +1310,22 @@ def select(args):
         raise FileExistsError(
             f"Existing selection differs; use --overwrite: {destination}"
         )
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    histories_dir = args.output_dir / "histories"
-    histories_dir.mkdir(exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
+    histories_dir = os.path.join(args.output_dir, "histories")
+    os.makedirs(histories_dir, exist_ok=True)
     for value in selected_ids:
         shutil.copy2(
-            args.input_dir / f"history_{value}.txt",
-            histories_dir / f"history_{value}.txt",
+            os.path.join(args.input_dir, f"history_{value}.txt"),
+            os.path.join(histories_dir, f"history_{value}.txt"),
         )
-    (args.output_dir / "selected_ids.txt").write_text(
-        f"# Complete cell histories: snapshots {snapshots[0]}..{snapshots[-1]}, {len(snapshots)} samples\n"
-        "# Ranked by late thermal activity, with diversity in density-temperature paths.\n"
-        "# See selection.json for physical filters, scores, and source provenance.\n"
-        + "".join(f"{value}\n" for value in selected_ids)
-    )
-    with (args.output_dir / "candidates_summary.tsv").open("w", newline="") as stream:
+    with open(os.path.join(args.output_dir, "selected_ids.txt"), "w") as stream:
+        stream.write(
+            f"# Complete cell histories: snapshots {snapshots[0]}..{snapshots[-1]}, {len(snapshots)} samples\n"
+            "# Ranked by late thermal activity, with diversity in density-temperature paths.\n"
+            "# See selection.json for physical filters, scores, and source provenance.\n"
+            + "".join(f"{value}\n" for value in selected_ids)
+        )
+    with open(os.path.join(args.output_dir, "candidates_summary.tsv"), "w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=rows[0].keys(), delimiter="\t")
         writer.writeheader()
         writer.writerows(rows)
@@ -1339,7 +1343,7 @@ def select(args):
             "schema_version": 1,
             "status": "complete",
             "settings": settings,
-            "source_metadata": str(source_metadata.resolve()),
+            "source_metadata": os.path.realpath(source_metadata),
             "snapshots": snapshots.tolist(),
             "time_start_code": float(times[0]),
             "time_end_code": float(times[-1]),
@@ -1729,7 +1733,7 @@ def main():
         child.add_argument("--stop-snapshot", type=int, default=151)
         child.add_argument("--snapshot-step", type=int, default=1)
         child.add_argument("--workers", type=int, default=1)
-        child.add_argument("--output-dir", type=Path, required=True)
+        child.add_argument("--output-dir", required=True)
         child.add_argument("--overwrite", action="store_true")
         if command == "scan":
             child.add_argument("--min-snapshots", type=int, default=30)
@@ -1753,7 +1757,7 @@ def main():
                 help="Maximum candidates retained in each lifetime/thermal pool",
             )
         elif command == "extract":
-            child.add_argument("--ids-file", type=Path, required=True)
+            child.add_argument("--ids-file", required=True)
         else:
             child.add_argument(
                 "--min-duration-tfb",
@@ -1767,8 +1771,8 @@ def main():
     child = commands.add_parser(
         "select", help="Select interesting complete extracted histories"
     )
-    child.add_argument("--input-dir", type=Path, required=True)
-    child.add_argument("--output-dir", type=Path, required=True)
+    child.add_argument("--input-dir", required=True)
+    child.add_argument("--output-dir", required=True)
     child.add_argument("--keep", type=int, default=6)
     child.add_argument("--min-star", type=float, default=0.99)
     child.add_argument("--max-was-removed", type=float, default=1e-3)

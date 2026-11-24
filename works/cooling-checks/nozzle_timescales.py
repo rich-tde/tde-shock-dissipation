@@ -125,14 +125,14 @@ Usage
 Import from the repository root (``/home/hey4/rich_tde``) in the richanalysis
 environment. Use a persistent study directory for generated maps::
 
+    import os
     import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path("dev").resolve()))
-    sys.path.insert(0, str(Path("works/cooling-checks").resolve()))
+    sys.path.insert(0, os.path.abspath("dev"))
+    sys.path.insert(0, os.path.abspath("works/cooling-checks"))
     import nozzle_timescales as nt
 
     source = nt.snapshot_path("1e4", 108)
-    destination = Path("data/processed/CoolingChecks/custom/1e4/snap_0108.npz")
+    destination = "data/processed/CoolingChecks/custom/1e4/snap_0108.npz"
     # This performs a full snapshot calculation; choose a cluster job as needed.
     nt.calculate_snapshot(source, destination, nt.config_for("1e4"),
                           (256, 256, 512), workers=8, z_spacing="sinh")
@@ -147,12 +147,11 @@ Loading examples
 ----------------
 Read the persisted map, select a nozzle diagnostic and plot with x horizontal::
 
-    from pathlib import Path
     import numpy as np
     import dev
     import matplotlib.pyplot as plt
 
-    path = Path("data/processed/CoolingChecks/custom/1e4/snap_0108.npz")
+    path = "data/processed/CoolingChecks/custom/1e4/snap_0108.npz"
     with np.load(path) as data:
         run = data["run"].item()
         x, y = data["x_rp"], data["y_rp"]
@@ -170,15 +169,19 @@ Read the persisted map, select a nozzle diagnostic and plot with x horizontal::
 import math
 import os
 import re
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache" / "matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache",
+        "matplotlib",
+    ),
 )
 
 import numpy as np
 import unyt as u
-from dev.datapaths import TDE_PARAMETERS
+from dev.datapaths import TDE_PARAMETERS, snapshot_number
 
 import dev
 import richio
@@ -232,14 +235,16 @@ def scalar_time(snapshot):
 
 def snapshot_path(run, snapnum):
     paths = DATAPATHS(run)
-    snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
+    snapnums = [snapshot_number(path) for path in paths]
     return paths[snapnums.index(snapnum)]
 
 
 def coordinates(snapshot, path, config):
     x, y, z = snapshot.X, snapshot.Y, snapshot.Z
-    plain = re.fullmatch(r"snap_\d+\.h5", path.name)
-    if path.parent.name == "TEMPTDE" or (config["run"] != "1e6" and plain):
+    plain = re.fullmatch(r"snap_\d+\.h5", os.path.basename(path))
+    if os.path.basename(os.path.dirname(path)) == "TEMPTDE" or (
+        config["run"] != "1e6" and plain
+    ):
         offset = dev.reference_frame_offset(
             t=scalar_time(snapshot),
             Mbh=config["m_bh"] * richio.units.mscale,
@@ -253,7 +258,7 @@ def coordinates(snapshot, path, config):
 
 def load_direction(run, snapnum, root):
     radius = str(DIRECTION_RADIUS_MIN_RP[run]).replace(".", "p")
-    path = root / run / "directions" / f"direction_snap_{snapnum:04d}.npz"
+    path = os.path.join(root, run, "directions", f"direction_snap_{snapnum:04d}.npz")
     with np.load(path) as data:
         return tuple(
             float(data[f"direction_peak_{a}_rp_dirmin_{radius}"]) for a in "xyz"
@@ -262,16 +267,16 @@ def load_direction(run, snapnum, root):
 
 def atomic_npz(path, arrays):
     """Replace an NPZ using a sibling staging file; never stage in system scratch."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    with temporary.open("wb") as stream:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    temporary = os.path.splitext(path)[0] + ".tmp"
+    with open(temporary, "wb") as stream:
         np.savez_compressed(stream, **arrays)
-    temporary.replace(path)
+    os.replace(temporary, path)
 
 
 def cache_complete(path, shape):
     """Check required fields and grid shape; source content is not fingerprinted."""
-    if not path.is_file():
+    if not os.path.isfile(path):
         return False
     try:
         with np.load(path) as data:
@@ -403,7 +408,7 @@ def calculate_snapshot(
         {
             "run": config["run"],
             "snapshot_path": str(path),
-            "snapnum": int(re.search(r"(\d+)\.h5$", path.name).group(1)),
+            "snapnum": snapshot_number(path),
             "resolution_x": shape[0],
             "resolution_y": shape[1],
             "resolution_z": shape[2],

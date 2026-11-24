@@ -99,12 +99,13 @@ Loading examples
 ----------------
 Read the first result and recover the dissipation fraction from saved sums::
 
-    from pathlib import Path
+    import glob
+    import os
     import numpy as np
 
-    root = Path("data/processed/NozzleDissipationComparison")
-    root = root / "max-dissipation-nozzle-star-0.99/1e4"
-    path = sorted(root.glob("nozzle_dissipation_snap_*.npz"))[0]
+    root = "data/processed/NozzleDissipationComparison"
+    root = os.path.join(root, "max-dissipation-nozzle-star-0.99/1e4")
+    path = sorted(glob.glob(os.path.join(root, "nozzle_dissipation_snap_*.npz")))[0]
     with np.load(path) as data:
         valid = data["selection_valid"].item()
         kinetic = data["nozzle_kinetic_erg"].item()
@@ -124,24 +125,28 @@ from __future__ import annotations
 import os
 import re
 import tempfile
-from pathlib import Path
 
+import click
 import numpy as np
 import typer
 import unyt as u
 from loguru import logger
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 
-from dev.datapaths import DATAPATHS, TDE_PARAMETERS
+from dev.datapaths import DATAPATHS, TDE_PARAMETERS, snapshot_number
 
 import dev
 import richio
 
 app = typer.Typer(add_completion=False)
-OUTPUT_ROOT = Path(
+OUTPUT_ROOT = (
     "/home/hey4/rich_tde/data/processed/NozzleDissipationComparison/"
     "max-dissipation-nozzle-star-0.99"
 )
@@ -190,15 +195,15 @@ def run_scales(run: str):
     )
 
 
-def needs_frame_switch(run: str, snapshot_path: Path) -> bool:
+def needs_frame_switch(run: str, snapshot_path: str) -> bool:
     """Match the established comoving-to-BH-frame convention in ``E-t.py``."""
 
     if run == "1e6":
-        return snapshot_path.parent.name == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", snapshot_path.name) is not None
+        return os.path.basename(os.path.dirname(snapshot_path)) == "TEMPTDE"
+    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(snapshot_path)) is not None
 
 
-def bh_frame_coordinates_and_velocity(snap, run: str, snapshot_path: Path, scales):
+def bh_frame_coordinates_and_velocity(snap, run: str, snapshot_path: str, scales):
     """Return position and velocity components in the BH frame."""
 
     x, y, z = snap.X, snap.Y, snap.Z
@@ -280,7 +285,7 @@ def sums_and_ratios(
 def analyse_snapshot(
     run: str,
     snapnum: int,
-    snapshot_path: Path,
+    snapshot_path: str,
     star_min=STAR_MIN,
     angular_half_width_deg=ANGULAR_HALF_WIDTH_DEG,
     radial_limit_rs=RADIAL_LIMIT_RS,
@@ -393,22 +398,23 @@ def analyse_snapshot(
     return output
 
 
-def save_result(output: dict, output_path: Path):
+def save_result(output: dict, output_path: str):
     """Atomically write one scalar-only compressed result."""
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with tempfile.NamedTemporaryFile(
-        dir=output_path.parent,
-        prefix=f".{output_path.stem}.",
+        dir=os.path.dirname(output_path),
+        prefix=f".{os.path.splitext(os.path.basename(output_path))[0]}.",
         suffix=".npz",
         delete=False,
     ) as temporary:
-        temporary_path = Path(temporary.name)
+        temporary_path = temporary.name
     try:
         np.savez_compressed(temporary_path, **output)
         os.replace(temporary_path, output_path)
     finally:
-        temporary_path.unlink(missing_ok=True)
+        if os.path.exists(temporary_path):
+            os.remove(temporary_path)
 
 
 @app.command()
@@ -419,10 +425,9 @@ def main(
         min=0,
         help="Process only this zero-based snapshot position (default: all in run).",
     ),
-    snapshot_file: Path | None = typer.Option(
+    snapshot_file: str | None = typer.Option(
         None,
-        exists=True,
-        dir_okay=False,
+        click_type=click.Path(exists=True, dir_okay=False),
         help="One explicit snapshot from this mode; cannot combine with --snapshot-index.",
     ),
     star_min: float = typer.Option(
@@ -440,7 +445,7 @@ def main(
     radial_limit_rs: float = typer.Option(
         RADIAL_LIMIT_RS, min=0, help="Outer wedge radius in Schwarzschild radii."
     ),
-    output_root: Path = typer.Option(
+    output_root: str = typer.Option(
         OUTPUT_ROOT, help="Root directory for per-run result files."
     ),
     overwrite: bool = typer.Option(
@@ -455,15 +460,15 @@ def main(
             raise typer.BadParameter(
                 "Use --snapshot-file or --snapshot-index, not both"
             )
-        match = re.fullmatch(r"snap_(?:full_)?(\d+)\.h5", snapshot_file.name)
+        match = re.fullmatch(r"snap_(?:full_)?(\d+)\.h5", os.path.basename(snapshot_file))
         if match is None:
             raise typer.BadParameter(
                 "--snapshot-file must be snap_<n>.h5 or snap_full_<n>.h5"
             )
-        snapnums, paths = [int(match.group(1))], [snapshot_file.resolve()]
+        snapnums, paths = [int(match.group(1))], [os.path.realpath(snapshot_file)]
     else:
         paths = DATAPATHS(run)
-        snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
+        snapnums = [snapshot_number(path) for path in paths]
     items = list(zip(snapnums, paths))
     if snapshot_index is not None:
         if snapshot_index >= len(items):
@@ -472,16 +477,16 @@ def main(
             )
         items = [items[snapshot_index]]
 
-    output_dir = output_root / run
+    output_dir = os.path.join(output_root, run)
     logger.info(f"Processing {len(items)} of {len(paths)} snapshots for {run}")
     for position, (snapnum, snapshot_path) in enumerate(items, start=1):
-        output_path = output_dir / f"nozzle_dissipation_snap_{snapnum:04d}.npz"
-        if output_path.exists() and not overwrite:
+        output_path = os.path.join(output_dir, f"nozzle_dissipation_snap_{snapnum:04d}.npz")
+        if os.path.exists(output_path) and not overwrite:
             with np.load(output_path) as cached:
                 compatible = (
                     cached["run"].item() == run
-                    and Path(cached["snap_path"].item()).resolve()
-                    == Path(snapshot_path).resolve()
+                    and os.path.realpath(cached["snap_path"].item())
+                    == os.path.realpath(snapshot_path)
                     and float(cached["star_min"]) == star_min
                     and float(cached["angular_half_width_deg"])
                     == angular_half_width_deg

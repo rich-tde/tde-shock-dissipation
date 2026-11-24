@@ -148,14 +148,14 @@ Loading examples
 ----------------
 Read a map, compute a luminosity and display its orientation explicitly::
 
-    from pathlib import Path
+    import os
     import numpy as np
     import dev
     import matplotlib.pyplot as plt
 
-    root = Path("data/processed/CoolingChecks/nozzle-timescale-series")
-    root = root / "stage1-selection/1e4"
-    with np.load(root / "columns/selection_snap_0108_256.npz") as data:
+    root = "data/processed/CoolingChecks/nozzle-timescale-series"
+    root = os.path.join(root, "stage1-selection/1e4")
+    with np.load(os.path.join(root, "columns/selection_snap_0108_256.npz")) as data:
         x, y = data["x_rp"], data["y_rp"]
         column = data["dissipation_column"]
         mask = data["eligible_columns"] & np.isfinite(column)
@@ -170,7 +170,7 @@ Read a map, compute a luminosity and display its orientation explicitly::
 Read the CSV by named fields rather than assuming a column order::
 
     import csv
-    with (root / "selection-metrics.csv").open(newline="") as stream:
+    with open(os.path.join(root, "selection-metrics.csv"), newline="") as stream:
         rows = list(csv.DictReader(stream))
     selected = [row for row in rows if int(row["snapnum"]) == 108
                 and float(row["percentile"]) == 99.9]
@@ -185,10 +185,14 @@ import math
 import os
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache" / "matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache",
+        "matplotlib",
+    ),
 )
 
 os.environ.setdefault("MPLBACKEND", "Agg")
@@ -207,7 +211,7 @@ from scipy import ndimage
 import richio
 from dev import DATAPATHS, SNAPSHOT_TFB
 
-OUTPUT_ROOT = Path(
+OUTPUT_ROOT = (
     "/home/hey4/rich_tde/data/processed/CoolingChecks/"
     "nozzle-timescale-series/stage1-selection"
 )
@@ -250,29 +254,29 @@ RUNS = {
 }
 
 
-def selected_snapshots(run: str) -> list[tuple[int, Path, bool]]:
+def selected_snapshots(run: str) -> list[tuple[int, str, bool]]:
     """Return the current NozzleZoomSlices epochs plus the last snapshot."""
 
     selected = [
-        (int(path.stem.rsplit("_", 1)[-1]), path, False)
+        (dev.datapaths.snapshot_number(path), path, False)
         for path in SNAPSHOT_TFB(run, REQUESTED_TFBS[run])
     ]
     paths = DATAPATHS(run)
-    selected.append((int(paths[-1].stem.rsplit("_", 1)[-1]), paths[-1], True))
+    selected.append((dev.datapaths.snapshot_number(paths[-1]), paths[-1], True))
 
     deduplicated = {}
     for snapnum, path, is_last in selected:
         old = deduplicated.get(snapnum)
-        deduplicated[snapnum] = (Path(path), is_last or (old[1] if old else False))
+        deduplicated[snapnum] = (os.path.normpath(path), is_last or (old[1] if old else False))
     return [
         (snapnum, path, is_last) for snapnum, (path, is_last) in deduplicated.items()
     ]
 
 
-def needs_reference_frame(run: str, path: Path) -> bool:
+def needs_reference_frame(run: str, path: str) -> bool:
     if run == "1e6":
-        return path.parent.name == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", path.name) is not None
+        return os.path.basename(os.path.dirname(path)) == "TEMPTDE"
+    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
 
 
 def scalar_time(snapshot):
@@ -281,7 +285,7 @@ def scalar_time(snapshot):
     return u.unyt_quantity(value, "code_time", registry=time.units.registry)
 
 
-def bh_frame_coordinates(snapshot, config: RunConfig, path: Path):
+def bh_frame_coordinates(snapshot, config: RunConfig, path: str):
     x, y, z = snapshot.X, snapshot.Y, snapshot.Z
     if needs_reference_frame(config.run, path):
         offset = dev.reference_frame_offset(
@@ -295,8 +299,8 @@ def bh_frame_coordinates(snapshot, config: RunConfig, path: Path):
     return x, y, z
 
 
-def cache_complete(path: Path, resolution: int) -> bool:
-    if not path.is_file() or path.stat().st_size == 0:
+def cache_complete(path: str, resolution: int) -> bool:
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
         return False
     try:
         with np.load(path) as data:
@@ -317,8 +321,8 @@ def cache_complete(path: Path, resolution: int) -> bool:
 
 
 def build_column_cache(
-    snapshot_path: Path,
-    destination: Path,
+    snapshot_path: str,
+    destination: str,
     config: RunConfig,
     resolution: int,
     workers: int,
@@ -384,7 +388,7 @@ def build_column_cache(
         "snapshot_path": np.asarray(str(snapshot_path)),
         "resolution": np.asarray(resolution),
         "snapnum": np.asarray(
-            int(re.search(r"(\d+)\.h5$", snapshot_path.name).group(1))
+            int(re.search(r"(\d+)\.h5$", os.path.basename(snapshot_path)).group(1))
         ),
         "time_tfb": np.asarray(float(time.to_value("code_time")) / config.t_fb_code),
         "r_p_cm": np.asarray(float(r_p.to_value("cm"))),
@@ -402,11 +406,11 @@ def build_column_cache(
         "surface_density": np.asarray(surface_density, dtype="float64"),
         "surface_density_unit": np.asarray(str(surface_density.units)),
     }
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(".tmp")
-    with temporary.open("wb") as stream:
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    temporary = os.path.splitext(destination)[0] + ".tmp"
+    with open(temporary, "wb") as stream:
         np.savez_compressed(stream, **arrays)
-    temporary.replace(destination)
+    os.replace(temporary, destination)
 
 
 def percentile_metrics(
@@ -504,7 +508,7 @@ def positive_log10(values):
 
 
 def render_validation(
-    cache_path: Path, output_path: Path, save_figure: bool = True
+    cache_path: str, output_path: str, save_figure: bool = True
 ) -> list[dict]:
     with np.load(cache_path) as data:
         run = str(data["run"])
@@ -686,22 +690,22 @@ def render_validation(
         ax.set_ylabel(r"$y/r_p$")
     fig.tight_layout()
     if save_figure:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         fig.savefig(output_path, dpi=180)
     plt.close(fig)
     return metrics_rows
 
 
-def write_csv(path: Path, rows: list[dict]) -> None:
+def write_csv(path: str, rows: list[dict]) -> None:
     if not rows:
         raise ValueError("No rows to save")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    with temporary.open("w", newline="", encoding="utf-8") as stream:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    temporary = os.path.splitext(path)[0] + ".tmp"
+    with open(temporary, "w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-    temporary.replace(path)
+    os.replace(temporary, path)
 
 
 def convergence_rows(rows: list[dict], resolutions: tuple[int, ...]) -> list[dict]:
@@ -779,7 +783,7 @@ def convergence_rows(rows: list[dict], resolutions: tuple[int, ...]) -> list[dic
 def main(
     mode: int = typer.Option(..., min=1, max=3, help="1: 1e4, 2: 1e5, 3: 1e6"),
     workers: int = typer.Option(8, min=1, help="KD-tree query threads"),
-    output_root: Path = typer.Option(  # noqa: B008 - Typer declares options in defaults.
+    output_root: str = typer.Option(  # noqa: B008 - Typer declares options in defaults.
         OUTPUT_ROOT, help="Stage-1 output directory"
     ),
     overwrite: bool = typer.Option(False, help="Rebuild existing column caches"),
@@ -801,7 +805,7 @@ def main(
     config = RUNS[mode]
     if snapshot_number:
         paths = DATAPATHS(config.run)
-        numbers = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
+        numbers = [dev.datapaths.snapshot_number(path) for path in paths]
         selected = [
             (number, paths[numbers.index(number)], number == numbers[-1])
             for number in dict.fromkeys(snapshot_number)
@@ -833,19 +837,15 @@ def main(
     if list_only:
         return
 
-    run_root = output_root / config.run
+    run_root = os.path.join(output_root, config.run)
     all_rows = []
     for resolution in requested_resolutions:
         for snapnum, snapshot_path, _ in selected:
-            cache_path = (
-                run_root
-                / "columns"
-                / (f"selection_snap_{snapnum:04d}_{resolution}.npz")
+            cache_path = os.path.join(
+                run_root, "columns", f"selection_snap_{snapnum:04d}_{resolution}.npz"
             )
-            figure_path = (
-                run_root
-                / "figures"
-                / (f"selection_snap_{snapnum:04d}_{resolution}.png")
+            figure_path = os.path.join(
+                run_root, "figures", f"selection_snap_{snapnum:04d}_{resolution}.png"
             )
             if overwrite or not cache_complete(cache_path, resolution):
                 logger.info(
@@ -859,18 +859,18 @@ def main(
             save_figure = (
                 overwrite
                 or rerender
-                or not figure_path.is_file()
-                or figure_path.stat().st_size == 0
+                or not os.path.isfile(figure_path)
+                or os.path.getsize(figure_path) == 0
             )
             if save_figure:
                 logger.info("Rendering {}", figure_path)
             rows = render_validation(cache_path, figure_path, save_figure=save_figure)
             all_rows.extend(rows)
 
-    write_csv(run_root / "selection-metrics.csv", all_rows)
+    write_csv(os.path.join(run_root, "selection-metrics.csv"), all_rows)
     if len(requested_resolutions) >= 2:
         write_csv(
-            run_root / "selection-convergence.csv",
+            os.path.join(run_root, "selection-convergence.csv"),
             convergence_rows(all_rows, requested_resolutions),
         )
     logger.info("Stage 1 complete for {}: {} metric rows", config.run, len(all_rows))

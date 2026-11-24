@@ -84,11 +84,11 @@ Loading examples
 Find the original snapshot indices of surface cells with thermal Mach >= 2,
 without loading the potentially much larger full-snapshot masks::
 
-    from pathlib import Path
+    import os
     import numpy as np
 
-    root = Path("data/processed/ShockFinderEdissSelection/1e4")
-    with np.load(root / "shockfinder_snap_0077.npz") as data:
+    root = "data/processed/ShockFinderEdissSelection/1e4"
+    with np.load(os.path.join(root, "shockfinder_snap_0077.npz")) as data:
         surface_index = data["surf_idx"]
         mach = data["mach_T"]
         snapshot_path = data["snap_path"].item()
@@ -109,15 +109,18 @@ from __future__ import annotations
 import os
 import tempfile
 import time
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 
 import numpy as np
 import typer
-from dev.datapaths import DATAPATHS, SNAPSHOT_TFB, TDE_PARAMETERS
+from dev.datapaths import DATAPATHS, SNAPSHOT_TFB, TDE_PARAMETERS, snapshot_number
 from loguru import logger
 
 import richio
@@ -125,7 +128,7 @@ from richio import shockfinder as sf
 
 app = typer.Typer(add_completion=False)
 
-OUTPUT_ROOT = Path("/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection")
+OUTPUT_ROOT = "/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection"
 REQUESTED_TFBS = {
     "1e4": (0.5, 1.0, 1.5, 2.0),
     "1e5": (0.3, 0.5),
@@ -158,7 +161,7 @@ def selection(
         requested_tfbs = REQUESTED_TFBS[run] if use_defaults else (tfbs or [])
         for requested_tfb in requested_tfbs:
             path = SNAPSHOT_TFB(run, requested_tfb)
-            snapnum = int(path.stem.rsplit("_", 1)[-1])
+            snapnum = snapshot_number(path)
             selected.append(
                 {
                     "run": run,
@@ -169,7 +172,7 @@ def selection(
                 }
             )
         paths = DATAPATHS(run)
-        snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
+        snapnums = [snapshot_number(path) for path in paths]
         available = dict(zip(snapnums, paths))
         for number in snapshots or []:
             selected.append(
@@ -219,7 +222,7 @@ def main(
     include_last: bool = typer.Option(
         False, help="Include final snapshot; alone selects only final snapshots."
     ),
-    output_root: Path = typer.Option(
+    output_root: str = typer.Option(
         OUTPUT_ROOT, help="Write RUN/shockfinder_snap_NNNN.npz here."
     ),
     k_neighbours: int = typer.Option(
@@ -248,10 +251,10 @@ def main(
     selected = selection(mode, snapshot, tfb, include_last)
     if list_only:
         for index, item in enumerate(selected):
-            output = (
-                output_root
-                / item["run"]
-                / f"shockfinder_snap_{item['snapnum']:04d}.npz"
+            output = os.path.join(
+                output_root,
+                item["run"],
+                f"shockfinder_snap_{item['snapnum']:04d}.npz",
             )
             print(
                 f"[{index}] {item['run']} snap {item['snapnum']}: "
@@ -273,10 +276,10 @@ def main(
     snapnum = item["snapnum"]
     snap_path = item["path"]
 
-    output_dir = output_root / run
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"shockfinder_snap_{snapnum:04d}.npz"
-    if output_path.exists() and not overwrite:
+    output_dir = os.path.join(output_root, run)
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, f"shockfinder_snap_{snapnum:04d}.npz")
+    if os.path.exists(output_path) and not overwrite:
         logger.info(f"Output exists; skipping {output_path}")
         return
 
@@ -307,9 +310,12 @@ def main(
     )
 
     with tempfile.NamedTemporaryFile(
-        dir=output_dir, prefix=f".{output_path.stem}.", suffix=".npz", delete=False
+        dir=output_dir,
+        prefix=f".{os.path.splitext(os.path.basename(output_path))[0]}.",
+        suffix=".npz",
+        delete=False,
     ) as temporary:
-        temporary_path = Path(temporary.name)
+        temporary_path = temporary.name
     try:
         np.savez_compressed(
             temporary_path,
@@ -339,7 +345,8 @@ def main(
         )
         os.replace(temporary_path, output_path)
     finally:
-        temporary_path.unlink(missing_ok=True)
+        if os.path.exists(temporary_path):
+            os.remove(temporary_path)
     logger.info(f"Saved {output_path}")
 
 

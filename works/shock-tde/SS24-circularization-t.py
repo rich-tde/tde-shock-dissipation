@@ -105,13 +105,13 @@ Loading examples
 ----------------
 Load bound energy and mass, and recover their physical units::
 
-    from pathlib import Path
+    import os
     import numpy as np
     import unyt as u
     import richio
 
-    root = Path("data/processed/SS24-circularization-t")
-    table = np.loadtxt(root / "SS24-circularization-t-1e6.txt", ndmin=2)
+    root = "data/processed/SS24-circularization-t"
+    table = np.loadtxt(os.path.join(root, "SS24-circularization-t-1e6.txt"), ndmin=2)
     # table is (N, 7); columns 1 and 2 contain the same time in different units.
     snapshot = table[:, 0].astype(int)
     time_days = table[:, 2]
@@ -126,7 +126,7 @@ Load bound energy and mass, and recover their physical units::
 
 Load the late fallback profile for plotting or interpolation::
 
-    fallback = np.loadtxt(root / "fallback-rate-snap712-23.17d.txt", ndmin=2)
+    fallback = np.loadtxt(os.path.join(root, "fallback-rate-snap712-23.17d.txt"), ndmin=2)
     assert fallback.shape == (2048, 6)
     return_time_days = fallback[:, 0]
     mdot_msun_per_year = fallback[:, 5]  # Smoothed; raw is column 4.
@@ -140,7 +140,6 @@ import glob
 import os
 import re
 from collections import Counter
-from pathlib import Path
 
 import numpy as np
 import typer
@@ -149,7 +148,11 @@ from loguru import logger
 from scipy.ndimage import gaussian_filter1d
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 
 import dev
@@ -416,7 +419,7 @@ def merge_timeseries(paths, output, require_contiguous=False):
     """Merge matching-schema shards; reject conflicting rows and preserve units."""
     columns = [[] for _ in range(7)]
     for path in paths:
-        if not path.is_file() or path.stat().st_size == 0:
+        if not os.path.isfile(path) or os.path.getsize(path) == 0:
             raise ValueError(f"Missing or empty merge input: {path}")
         for target, source in zip(columns, load_existing_timeseries(path)):
             target.extend(source)
@@ -449,7 +452,7 @@ def merge_timeseries(paths, output, require_contiguous=False):
         u.unyt_array(values, unit, registry=richio.units.registry)
         for values, unit in zip(raw.T, units)
     ]
-    output.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
     save_timeseries_atomic(output, arrays)
     logger.info("Merged {} rows into {}", len(raw), output)
 
@@ -462,18 +465,18 @@ def main(
     end_snapshot: int = typer.Option(
         10_000, help="Last snapshot included in the time series"
     ),
-    timeseries_file: Path | None = typer.Option(
+    timeseries_file: str | None = typer.Option(
         None,
         help="Checkpoint/output path; defaults to OUTPUT_DIR/SS24-circularization-t-1e6.txt.",
     ),
-    output_dir: Path = typer.Option(
-        Path(OUTPUT_DIR),
+    output_dir: str = typer.Option(
+        OUTPUT_DIR,
         help="Directory for fallback profiles and the default time series.",
     ),
-    data_dir: list[Path] | None = typer.Option(
+    data_dir: list[str] | None = typer.Option(
         None, help="Repeat for relocated copies of the 1e6 run/restart directories."
     ),
-    merge_input: list[Path] | None = typer.Option(
+    merge_input: list[str] | None = typer.Option(
         None, help="Merge only these tables; repeat per input. No snapshots loaded."
     ),
     require_contiguous: bool = typer.Option(
@@ -488,9 +491,12 @@ def main(
     ),
 ):
     """Reproduce the SS24 fallback-normalized circularization diagnostic."""
-    timeseries_file = timeseries_file or output_dir / "SS24-circularization-t-1e6.txt"
+    timeseries_file = timeseries_file or os.path.join(
+        output_dir, "SS24-circularization-t-1e6.txt"
+    )
+    data_dir = [os.path.normpath(directory) for directory in data_dir or []]
     if merge_input:
-        if timeseries_file.exists() and not overwrite:
+        if os.path.exists(timeseries_file) and not overwrite:
             raise typer.BadParameter(
                 "Merge destination exists; use --overwrite or another --timeseries-file"
             )
@@ -498,10 +504,10 @@ def main(
         return
     if end_snapshot < start_snapshot:
         raise typer.BadParameter("--end-snapshot must be at least --start-snapshot")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    timeseries_file.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(timeseries_file)), exist_ok=True)
     fallback_paths = {
-        number: output_dir / Path(path).name
+        number: os.path.join(output_dir, os.path.basename(path))
         for number, path in FALLBACK_SNAPSHOTS.items()
     }
     arrays = (

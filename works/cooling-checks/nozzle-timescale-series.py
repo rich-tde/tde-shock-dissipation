@@ -164,11 +164,11 @@ Loading examples
 ----------------
 Inspect the result type, then select the finite wedge values::
 
-    from pathlib import Path
+    import os
     import numpy as np
 
-    root = Path("data/processed/CoolingChecks/nozzle-timescale-series/production-sinh")
-    with np.load(root / "1e4/snap_0108_256x256x512_sinhz.npz") as data:
+    root = "data/processed/CoolingChecks/nozzle-timescale-series/production-sinh"
+    with np.load(os.path.join(root, "1e4/snap_0108_256x256x512_sinhz.npz")) as data:
         if "status" in data:
             print(data["status"].item(), data["status_reason"].item())
         else:
@@ -183,7 +183,7 @@ Load one physical time series from the CSV, ignoring unavailable/undefined rows:
     import dev
     import matplotlib.pyplot as plt
 
-    with (root / "nozzle_timescale_series.csv").open(newline="") as stream:
+    with open(os.path.join(root, "nozzle_timescale_series.csv"), newline="") as stream:
         rows = [row for row in csv.DictReader(stream)
                 if row["run"] == "1e4" and row["statistic"] == "median"
                 and row["status"] == "ok"]
@@ -200,11 +200,16 @@ Load one physical time series from the CSV, ignoring unavailable/undefined rows:
 from __future__ import annotations
 
 import csv
+import glob
 import os
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache" / "matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache",
+        "matplotlib",
+    ),
 )
 
 os.environ.setdefault("MPLBACKEND", "Agg")
@@ -215,12 +220,12 @@ import matplotlib.pyplot as plt
 import nozzle_timescales as VALIDATION
 import numpy as np
 import typer
-from dev.datapaths import DATAPATHS
+from dev.datapaths import DATAPATHS, snapshot_number
 from loguru import logger
 
 import richio
 
-OUTPUT_ROOT = Path(
+OUTPUT_ROOT = (
     "/home/hey4/rich_tde/data/processed/CoolingChecks/"
     "nozzle-timescale-series/production-sinh"
 )
@@ -234,16 +239,16 @@ PLOTTED_STATISTICS = (
 
 
 def result_path(
-    root: Path, run: str, snapnum: int, resolution: int, resolution_z: int
-) -> Path:
-    return (
-        root
-        / run
-        / f"snap_{snapnum:04d}_{resolution}x{resolution}x{resolution_z}_sinhz.npz"
+    root: str, run: str, snapnum: int, resolution: int, resolution_z: int
+) -> str:
+    return os.path.join(
+        root,
+        run,
+        f"snap_{snapnum:04d}_{resolution}x{resolution}x{resolution_z}_sinhz.npz",
     )
 
 
-def unavailable_complete(path: Path, run: str, snapnum: int) -> bool:
+def unavailable_complete(path: str, run: str, snapnum: int) -> bool:
     try:
         with np.load(path) as data:
             return (
@@ -256,7 +261,7 @@ def unavailable_complete(path: Path, run: str, snapnum: int) -> bool:
 
 
 def result_complete(
-    path: Path, run: str, snapnum: int, shape: tuple[int, int, int]
+    path: str, run: str, snapnum: int, shape: tuple[int, int, int]
 ) -> bool:
     return VALIDATION.cache_complete(path, shape) or unavailable_complete(
         path, run, snapnum
@@ -264,7 +269,7 @@ def result_complete(
 
 
 def write_unavailable(
-    path: Path, run: str, snapnum: int, snapshot_path: Path, reason: str
+    path: str, run: str, snapnum: int, snapshot_path: str, reason: str
 ) -> None:
     snapshot = richio.load(str(snapshot_path))
     config = VALIDATION.config_for(run)
@@ -289,7 +294,7 @@ def run_worker(
     resolution: int,
     resolution_z: int,
     workers: int,
-    output_root: Path,
+    output_root: str,
     overwrite: bool,
 ) -> None:
     run = RUN_BY_MODE[mode]
@@ -299,7 +304,7 @@ def run_worker(
             f"snapshot-index {snapshot_index} outside 0..{len(paths) - 1} for {run}"
         )
     snapshot_path = paths[snapshot_index]
-    snapnum = int(snapshot_path.stem.rsplit("_", 1)[-1])
+    snapnum = snapshot_number(snapshot_path)
     shape = (resolution, resolution, resolution_z)
     destination = result_path(output_root, run, snapnum, resolution, resolution_z)
     if not overwrite and result_complete(destination, run, snapnum, shape):
@@ -335,7 +340,7 @@ def scalar(value):
     return value
 
 
-def unavailable_rows(path: Path) -> list[dict]:
+def unavailable_rows(path: str) -> list[dict]:
     with np.load(path) as data:
         common = {
             "run": str(data["run"]),
@@ -367,17 +372,25 @@ def classify(row: dict) -> None:
     row["effectively_cooled"] = bool(effective < 1) if np.isfinite(effective) else ""
 
 
-def aggregate(output_root: Path, resolution: int, resolution_z: int) -> list[dict]:
+def aggregate(output_root: str, resolution: int, resolution_z: int) -> list[dict]:
     rows: list[dict] = []
     missing = []
     invalid = []
     for run in RUN_BY_MODE.values():
-        snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in DATAPATHS(run)]
+        snapnums = [snapshot_number(path) for path in DATAPATHS(run)]
         expected_names = {
-            result_path(output_root, run, snapnum, resolution, resolution_z).name
+            os.path.basename(
+                result_path(output_root, run, snapnum, resolution, resolution_z)
+            )
             for snapnum in snapnums
         }
-        actual_names = {path.name for path in (output_root / run).glob("*.npz")}
+        actual_names = {
+            os.path.basename(path)
+            for path in glob.glob(
+                os.path.join(glob.escape(output_root), run, "*.npz"),
+                include_hidden=True,
+            )
+        }
         extras = sorted(actual_names - expected_names)
         if extras:
             raise ValueError(
@@ -385,7 +398,7 @@ def aggregate(output_root: Path, resolution: int, resolution_z: int) -> list[dic
             )
         for snapnum in snapnums:
             path = result_path(output_root, run, snapnum, resolution, resolution_z)
-            if not path.is_file():
+            if not os.path.isfile(path):
                 missing.append(str(path))
                 continue
             if unavailable_complete(path, run, snapnum):
@@ -416,13 +429,13 @@ def aggregate(output_root: Path, resolution: int, resolution_z: int) -> list[dic
         for key in row:
             if key not in fieldnames:
                 fieldnames.append(key)
-    destination = output_root / "nozzle_timescale_series.csv"
-    temporary = destination.with_suffix(".tmp")
-    with temporary.open("w", newline="", encoding="utf-8") as stream:
+    destination = os.path.join(output_root, "nozzle_timescale_series.csv")
+    temporary = os.path.splitext(destination)[0] + ".tmp"
+    with open(temporary, "w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
-    temporary.replace(destination)
+    os.replace(temporary, destination)
     return rows
 
 
@@ -437,7 +450,7 @@ def series(items: list[dict], field: str):
     return np.asarray([float(row.get(field, np.nan)) for row in items])
 
 
-def render_timescales(rows: list[dict], output_root: Path, statistic: str) -> None:
+def render_timescales(rows: list[dict], output_root: str, statistic: str) -> None:
     fig, axes = plt.subplots(2, 3, figsize=(11.5, 6.5), sharex="col")
     for column, run in enumerate(RUN_BY_MODE.values()):
         items = rows_for(rows, run, statistic)
@@ -468,13 +481,13 @@ def render_timescales(rows: list[dict], output_root: Path, statistic: str) -> No
         ax.set_ylabel("timescale ratio")
         ax.legend(fontsize=7, ncol=2)
     fig.tight_layout()
-    destination = output_root / "figures" / f"timescales_{statistic}.png"
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination = os.path.join(output_root, "figures", f"timescales_{statistic}.png")
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
     fig.savefig(destination, dpi=180)
     plt.close(fig)
 
 
-def render_components(rows: list[dict], output_root: Path, statistic: str) -> None:
+def render_components(rows: list[dict], output_root: str, statistic: str) -> None:
     fields = (
         ("tau_R", r"$\tau_R$", True),
         ("H_Rstar", r"$H/R_*$", True),
@@ -496,13 +509,13 @@ def render_components(rows: list[dict], output_root: Path, statistic: str) -> No
             if row_index == len(fields) - 1:
                 ax.set_xlabel(r"$t/t_{\rm fb}$")
     fig.tight_layout()
-    destination = output_root / "figures" / f"components_{statistic}.png"
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination = os.path.join(output_root, "figures", f"components_{statistic}.png")
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
     fig.savefig(destination, dpi=180)
     plt.close(fig)
 
 
-def render_selection(rows: list[dict], output_root: Path) -> None:
+def render_selection(rows: list[dict], output_root: str) -> None:
     fig, axes = plt.subplots(3, 3, figsize=(11.5, 7.5), sharex="col")
     for column, run in enumerate(RUN_BY_MODE.values()):
         items = rows_for(rows, run, "max_dissipation_pixel")
@@ -522,13 +535,13 @@ def render_selection(rows: list[dict], output_root: Path) -> None:
         axes[2, column].set_ylabel(r"$R_{\rm peak}/r_p$")
         axes[2, column].set_xlabel(r"$t/t_{\rm fb}$")
     fig.tight_layout()
-    destination = output_root / "figures" / "selection_quality.png"
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination = os.path.join(output_root, "figures", "selection_quality.png")
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
     fig.savefig(destination, dpi=180)
     plt.close(fig)
 
 
-def run_aggregate(output_root: Path, resolution: int, resolution_z: int) -> None:
+def run_aggregate(output_root: str, resolution: int, resolution_z: int) -> None:
     rows = aggregate(output_root, resolution, resolution_z)
     for statistic in PLOTTED_STATISTICS:
         render_timescales(rows, output_root, statistic)
@@ -552,7 +565,7 @@ def main(
     resolution: int = typer.Option(256, min=8, help="x/y resolution"),
     resolution_z: int = typer.Option(512, min=8),
     workers: int = typer.Option(8, min=1),
-    output_root: Path = typer.Option(  # noqa: B008 - Typer declares options in defaults.
+    output_root: str = typer.Option(  # noqa: B008 - Typer declares options in defaults.
         OUTPUT_ROOT
     ),
     overwrite: bool = typer.Option(False),
@@ -566,7 +579,7 @@ def main(
     if action == "worker":
         if snapshot_number is not None:
             numbers = [
-                int(path.stem.rsplit("_", 1)[-1])
+                dev.datapaths.snapshot_number(path)
                 for path in DATAPATHS(RUN_BY_MODE[mode])
             ]
             snapshot_index = numbers.index(snapshot_number)

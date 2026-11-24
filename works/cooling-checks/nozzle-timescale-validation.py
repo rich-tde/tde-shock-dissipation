@@ -121,14 +121,14 @@ Loading examples
 ----------------
 Inspect one map and its wedge median; ``map[i,j]`` is at ``(x[i],y[j])``::
 
-    from pathlib import Path
+    import os
     import numpy as np
     import dev
     import matplotlib.pyplot as plt
 
-    root = Path("data/processed/CoolingChecks/nozzle-timescale-series")
-    run_root = root / "stage2-timescales/1e4"
-    with np.load(run_root / "maps/timescales_snap_0108_256.npz") as data:
+    root = "data/processed/CoolingChecks/nozzle-timescale-series"
+    run_root = os.path.join(root, "stage2-timescales/1e4")
+    with np.load(os.path.join(run_root, "maps/timescales_snap_0108_256.npz")) as data:
         x, y = data["x_rp"], data["y_rp"]
         ratio = data["effective_over_tv"]
         wedge = data["wedge_mask"]
@@ -142,7 +142,7 @@ Inspect one map and its wedge median; ``map[i,j]`` is at ``(x[i],y[j])``::
 
 Load the mixed-type summary without guessing columns::
 
-    table = np.loadtxt(run_root / "summary_snap_0108.txt", dtype=str,
+    table = np.loadtxt(os.path.join(run_root, "summary_snap_0108.txt"), dtype=str,
                        skiprows=1, ndmin=2)
     resolution = table[:, 0].astype(int)
     statistic = table[:, 1]
@@ -151,10 +151,14 @@ Load the mixed-type summary without guessing columns::
 """
 
 import os
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache" / "matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache",
+        "matplotlib",
+    ),
 )
 
 os.environ.setdefault("MPLBACKEND", "Agg")
@@ -168,10 +172,10 @@ from loguru import logger
 
 import dev  # noqa: F401
 
-OUTPUT_ROOT = Path(
+OUTPUT_ROOT = (
     "/home/hey4/rich_tde/data/processed/CoolingChecks/nozzle-timescale-series/stage2-timescales"
 )
-DIRECTION_ROOT = Path(
+DIRECTION_ROOT = (
     "/home/hey4/rich_tde/data/processed/CoolingChecks/nozzle-timescale-series/stage1-wedge-selection"
 )
 RUN_BY_MODE = {1: "1e4", 2: "1e5", 3: "1e6"}
@@ -232,14 +236,14 @@ def render(cache, destination):
         ax.set_title(rf"$\log_{{10}}$({label})")
         ax.set(xlabel=r"$x/r_p$", ylabel=r"$y/r_p$", aspect="equal")
         fig.colorbar(image, ax=ax)
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
     fig.savefig(destination, dpi=170)
     plt.close(fig)
 
 
 def write_summary(path, caches):
     rows = [row for cache in caches for row in nt.summarize_cache(cache)]
-    with path.open("w", encoding="utf-8") as stream:
+    with open(path, "w", encoding="utf-8") as stream:
         stream.write("resolution statistic tc/tv tesc/tv effective/tv\n")
         for row in rows:
             stream.write(
@@ -260,10 +264,10 @@ def main(
         None, help="Override the representative snapshot"
     ),
     workers: int = typer.Option(8, min=1, help="Nearest-cell query threads"),
-    output_root: Path = typer.Option(
+    output_root: str = typer.Option(
         OUTPUT_ROOT, help="Root for maps, figures and grid summaries"
     ),
-    direction_root: Path = typer.Option(
+    direction_root: str = typer.Option(
         DIRECTION_ROOT, help="Root containing wedge direction NPZ files"
     ),
     overwrite: bool = typer.Option(False, help="Recalculate maps and replace figures"),
@@ -273,7 +277,7 @@ def main(
     snapnum = SNAPSHOT[run] if snapshot_number is None else snapshot_number
     snapshot = nt.snapshot_path(run, snapnum)
     direction = nt.load_direction(run, snapnum, direction_root)
-    output = output_root / run
+    output = os.path.normpath(os.path.join(output_root, run))
     if resolution_xy or resolution_z or z_spacing != "linear":
         shapes = [(resolution_xy or 256, resolution_xy or 256, resolution_z or 512)]
     else:
@@ -288,7 +292,7 @@ def main(
             else f"{nx}x{ny}x{nz}_{z_spacing}z"
         )
         stem = f"timescales_snap_{snapnum:04d}_{grid}"
-        cache = output / "maps" / f"{stem}.npz"
+        cache = os.path.join(output, "maps", f"{stem}.npz")
         if overwrite or not nt.cache_complete(cache, shape):
             nt.calculate_snapshot(
                 snapshot,
@@ -300,12 +304,12 @@ def main(
                 z_spacing,
                 sinh_scale_rp,
             )
-        figure = output / "figures" / f"{stem}.png"
-        if overwrite or not figure.is_file():
+        figure = os.path.join(output, "figures", f"{stem}.png")
+        if overwrite or not os.path.isfile(figure):
             render(cache, figure)
         caches.append(cache)
 
-    summary = output / f"summary_snap_{snapnum:04d}.txt"
+    summary = os.path.join(output, f"summary_snap_{snapnum:04d}.txt")
     write_summary(summary, caches)
     logger.info("Summary -> {}", summary)
 

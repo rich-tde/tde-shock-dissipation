@@ -83,12 +83,12 @@ Loading examples
 ----------------
 Load a standard-region table and convert the four powers to CGS::
 
-    from pathlib import Path
+    import os
     import numpy as np
     import unyt as u
     import richio
 
-    path = Path("data/processed/SimpleTimeseries/Ediss-t-1e4-final.txt")
+    path = "data/processed/SimpleTimeseries/Ediss-t-1e4-final.txt"
     table = np.loadtxt(path, ndmin=2)  # (Nsnap, 7)
     snapshot = table[:, 0].astype(int)
     time_tfb = table[:, 2]
@@ -101,8 +101,8 @@ Load a standard-region table and convert the four powers to CGS::
 
 For the second command above, load the nozzle component explicitly::
 
-    root = Path("data/processed/EdissFourRegions")
-    table = np.loadtxt(root / "Ediss-t-four-regions-1e6-n10.txt", ndmin=2)
+    root = "data/processed/EdissFourRegions"
+    table = np.loadtxt(os.path.join(root, "Ediss-t-four-regions-1e6-n10.txt"), ndmin=2)
     time_tfb = table[:, 2]
     nozzle_power = u.unyt_array(
         table[:, 3], "code_mass*code_length**2/code_time**3",
@@ -113,11 +113,11 @@ For the second command above, load the nozzle component explicitly::
 
 from __future__ import annotations
 
+import glob
 import os
 import re
 from collections import Counter
 from enum import Enum
-from pathlib import Path
 
 import h5py
 import numpy as np
@@ -126,16 +126,20 @@ import unyt as u
 from loguru import logger
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 
-from dev.datapaths import DATADIRS, TDE_PARAMETERS
+from dev.datapaths import DATADIRS, TDE_PARAMETERS, snapshot_number
 
 import dev
 import richio
 
 app = typer.Typer(add_completion=False)
-REPO = Path(__file__).resolve().parents[2]
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 POWER_UNIT = "code_mass*code_length**2/code_time**3"
 
 
@@ -144,29 +148,26 @@ class Regions(str, Enum):
     nozzle_split = "nozzle-split"
 
 
-def snapshot_number(path: Path) -> int:
-    return int(re.fullmatch(r"snap_(?:full_)?(\d+)(?:\.h5)?", path.name).group(1))
-
-
 def selected_files(datadirs, stride, start, end, npoints, fallback_time, minimum_tfb):
     paths = []
     for directory in datadirs:
-        full = sorted(directory.glob("snap_full_*.h5"), key=snapshot_number)
+        full = sorted(glob.glob(os.path.join(directory, "snap_full_*.h5")), key=snapshot_number)
         plain = sorted(
             (
                 p
-                for p in directory.glob("snap_*.h5")
-                if re.fullmatch(r"snap_\d+\.h5", p.name)
+                for p in glob.glob(os.path.join(directory, "snap_*.h5"))
+                if re.fullmatch(r"snap_\d+\.h5", os.path.basename(p))
             ),
             key=snapshot_number,
         )
         npy = sorted(
-            (p for p in directory.glob("snap_*") if p.is_dir()), key=snapshot_number
+            (p for p in glob.glob(os.path.join(directory, "snap_*")) if os.path.isdir(p)),
+            key=snapshot_number,
         )
         for path in (full + plain or npy)[::stride]:
             number = snapshot_number(path)
             if start <= number <= end and not (
-                directory.name == "TEMPTDE4" and number >= 826
+                os.path.basename(directory) == "TEMPTDE4" and number >= 826
             ):
                 paths.append(path)
     if npoints is None:
@@ -201,9 +202,9 @@ def region_masks(x, y, z, r_p, r_a, regions):
 
 
 def load_checkpoint(path, regions):
-    if not path.exists() or path.stat().st_size == 0:
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
         return [[] for _ in range(7)]
-    with path.open() as handle:
+    with open(path) as handle:
         header = handle.readline()
     expected = (
         "SNAPNUM TIME TFALLBACK EDISS1 EDISS2 EDISS3 EDISS4"
@@ -235,7 +236,7 @@ def save_timeseries(path, columns, regions, sources):
     else:
         names = "EDISS_NOZZLE\tEDISS_STREAM_DISK\tEDISS_OUTGOING\tEDISS_INCOMING"
         definitions = "nozzle X>0,r<3*r_p; stream_disk X>0,r>=3*r_p; outgoing -r_a<X<0,Y<0; incoming -r_a<X<0,Y>0; X<-r_a excluded"
-    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary = path + ".tmp"
     u.savetxt(
         temporary,
         arrays=[u.unyt_array(c) for c in columns],
@@ -251,11 +252,11 @@ def main(
     regions: Regions = typer.Option(
         Regions.standard, help="Spatial partition of dissipation power."
     ),
-    data_dir: list[Path] | None = typer.Option(
+    data_dir: list[str] | None = typer.Option(
         None,
         help="Repeat for relocated run/restart directories; same physics and naming as --mode.",
     ),
-    output: Path | None = typer.Option(
+    output: str | None = typer.Option(
         None, help="Override output table; use a distinct file for a changed selection."
     ),
     start_snapshot: int = typer.Option(
@@ -291,18 +292,17 @@ def main(
     fallback_time = (
         np.pi / np.sqrt(2) * np.sqrt(rstar**3 / u.G / mstar) * np.sqrt(mbh / mstar)
     )
-    directories = data_dir or list(DATADIRS[run])
+    directories = [os.path.normpath(d) for d in data_dir or DATADIRS[run]]
     if output is None:
         suffix = "" if npoints is None else f"-n{npoints}"
         if regions == Regions.standard:
-            output = (
-                REPO
-                / f"data/processed/SimpleTimeseries/Ediss-t-{run}{suffix}-final.txt"
+            output = os.path.join(
+                REPO, f"data/processed/SimpleTimeseries/Ediss-t-{run}{suffix}-final.txt"
             )
         else:
-            output = (
-                REPO
-                / f"data/processed/EdissFourRegions/Ediss-t-four-regions-{run}{suffix}.txt"
+            output = os.path.join(
+                REPO,
+                f"data/processed/EdissFourRegions/Ediss-t-four-regions-{run}{suffix}.txt",
             )
     paths = selected_files(
         directories,
@@ -315,10 +315,11 @@ def main(
     )
     if not paths:
         raise ValueError("No snapshots match the selected input directories and range")
-    output.parent.mkdir(parents=True, exist_ok=True)
+    output = os.path.normpath(output)
+    os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
     # The former nozzle-split tool stored unfinished work in a .partial file.
     checkpoint = (
-        output if output.exists() else output.with_suffix(output.suffix + ".partial")
+        output if os.path.exists(output) else output + ".partial"
     )
     columns = (
         [[] for _ in range(7)] if overwrite else load_checkpoint(checkpoint, regions)
@@ -334,9 +335,9 @@ def main(
         tfb = time / fallback_time
         r_a = r_p if time < 0 else r_amin * tfb ** (2 / 3)
         needs_switch = (
-            path.parent.name == "TEMPTDE"
-            if path.parent.name.startswith("TEMPTDE")
-            else bool(re.fullmatch(r"snap_\d+\.h5", path.name))
+            os.path.basename(os.path.dirname(path)) == "TEMPTDE"
+            if os.path.basename(os.path.dirname(path)).startswith("TEMPTDE")
+            else bool(re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)))
         )
         if needs_switch:
             offset = dev.reference_frame_offset(

@@ -92,11 +92,10 @@ Loading examples
 Load JSON Lines, print the minimum-cell diameter and construct coordinates::
 
     import json
-    from pathlib import Path
     import numpy as np
 
-    path = Path("data/processed/NozzleResolution/1e4/snap-0108.jsonl")
-    with path.open() as stream:
+    path = "data/processed/NozzleResolution/1e4/snap-0108.jsonl"
+    with open(path) as stream:
         records = [json.loads(line) for line in stream if line.strip()]
     for record in records:
         cell = record["compressed_midplane"]
@@ -125,15 +124,19 @@ import os
 import re
 import sys
 from contextlib import nullcontext
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache" / "matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache",
+        "matplotlib",
+    ),
 )
 
 import h5py
 import numpy as np
-from dev.datapaths import DATAPATHS, TDE_PARAMETERS, _snapshot_times
+from dev.datapaths import DATAPATHS, TDE_PARAMETERS, _snapshot_times, snapshot_number
 
 import dev
 import richio
@@ -149,11 +152,11 @@ def scalar(dataset: h5py.Dataset) -> float:
     return float(np.asarray(dataset).squeeze())
 
 
-def frame_offset(run: str, path: Path, time: float) -> tuple[float, float]:
+def frame_offset(run: str, path: str, time: float) -> tuple[float, float]:
     needs_offset = (
-        path.parent.name == "TEMPTDE"
+        os.path.basename(os.path.dirname(path)) == "TEMPTDE"
         if run == "1e6"
-        else re.fullmatch(r"snap_\d+\.h5", path.name) is not None
+        else re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
     )
     if not needs_offset:
         return 0.0, 0.0
@@ -181,7 +184,7 @@ def cell_count(handle: h5py.File, groups: list[str]) -> int:
 def scan_snapshot(
     run: str,
     snapnum: int,
-    path: Path,
+    path: str,
     tfb: float,
     radius_min_rp: float = 0.6,
     radius_max_rp: float = 1.75,
@@ -284,7 +287,7 @@ def main() -> None:
         help="Nearest fallback-time epoch; repeat to select several",
     )
     selection.add_argument(
-        "--input-file", type=Path, help="One explicit RICH HDF5 snapshot"
+        "--input-file", help="One explicit RICH HDF5 snapshot"
     )
     parser.add_argument(
         "--include-last",
@@ -311,13 +314,17 @@ def main() -> None:
         help="Maximum |z| in local equivalent-sphere diameters",
     )
     parser.add_argument(
-        "--output", type=Path, help="Persistent JSON Lines output; default stdout"
+        "--output", help="Persistent JSON Lines output; default stdout"
     )
     parser.add_argument(
         "--overwrite", action="store_true", help="Replace an existing --output file"
     )
     args = parser.parse_args()
-    if args.output is not None and args.output.exists() and not args.overwrite:
+    if args.input_file is not None:
+        args.input_file = os.path.normpath(args.input_file)
+    if args.output is not None:
+        args.output = os.path.normpath(args.output)
+    if args.output is not None and os.path.exists(args.output) and not args.overwrite:
         print(
             f"Reusing {args.output}; pass --overwrite to recalculate", file=sys.stderr
         )
@@ -329,11 +336,11 @@ def main() -> None:
         math.pi / math.sqrt(2.0) * math.sqrt(rstar**3 / mstar) * math.sqrt(mbh / mstar)
     )
     if args.input_file is not None:
-        snapnum = int(re.search(r"(\d+)\.h5$", args.input_file.name).group(1))
+        snapnum = snapshot_number(args.input_file)
         selected = [(snapnum, args.input_file)]
     elif args.snapshot_number:
         paths = DATAPATHS(run)
-        snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
+        snapnums = [snapshot_number(path) for path in paths]
         selected = [
             (n, paths[snapnums.index(n)]) for n in dict.fromkeys(args.snapshot_number)
         ]
@@ -346,12 +353,12 @@ def main() -> None:
         }
         if args.include_last:
             indices.add(len(snapnums) - 1)
-        selected = [(snapnums[i], Path(paths[i])) for i in sorted(indices)]
+        selected = [(snapnums[i], paths[i]) for i in sorted(indices)]
 
     if args.output is not None:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        staging = args.output.with_suffix(args.output.suffix + ".part")
-        destination = staging.open("w", encoding="utf-8")
+        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+        staging = args.output + ".part"
+        destination = open(staging, "w", encoding="utf-8")
     else:
         destination = nullcontext(sys.stdout)
     with destination as stream:
@@ -367,7 +374,7 @@ def main() -> None:
             )
             print(json.dumps(result), file=stream, flush=True)
     if args.output is not None:
-        staging.replace(args.output)
+        os.replace(staging, args.output)
 
 
 if __name__ == "__main__":

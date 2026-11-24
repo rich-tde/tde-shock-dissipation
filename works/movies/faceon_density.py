@@ -59,11 +59,11 @@ Loading examples
 Inspect a saved preview frame without loading a simulation snapshot::
 
     import numpy as np
+    import os
     from PIL import Image
-    from pathlib import Path
 
-    root = Path("data/processed/Movies/faceon/preview/1e4")
-    with Image.open(root / "frames/frame_00000.png") as image:
+    root = "data/processed/Movies/faceon/preview/1e4"
+    with Image.open(os.path.join(root, "frames/frame_00000.png")) as image:
         rgba = np.array(image.convert("RGBA"))
     print(rgba.shape, rgba.dtype)  # (720, 1220, 4), uint8
 
@@ -71,7 +71,7 @@ After a complete run, inspect its encoded video::
 
     import imageio.v2 as imageio
 
-    with imageio.get_reader(root / "faceon_density_1e4.mp4") as movie:
+    with imageio.get_reader(os.path.join(root, "faceon_density_1e4.mp4")) as movie:
         rgb = movie.get_data(0)  # (H, W, 3), uint8; display pixels only
         print(movie.get_meta_data(), rgb.shape)
 """
@@ -85,24 +85,27 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import numpy as np
 import richio.render as richrender
 import unyt as u
-from dev.datapaths import DATAPATHS, SNAPSHOT_TIMES, TDE_PARAMETERS
+from dev.datapaths import DATAPATHS, SNAPSHOT_TIMES, TDE_PARAMETERS, snapshot_number
 
 import dev
 import richio
 
-REPO = Path("/home/hey4/rich_tde")
-OUTPUT_ROOT = REPO / "reports/movies/crete"
+REPO = "/home/hey4/rich_tde"
+OUTPUT_ROOT = os.path.join(REPO, "reports/movies/crete")
 COLOR_VMAX = 10.0**6.5  # rounded above the legacy faceon_A scan maximum (2.22e6)
 AMBIENT_FACTOR = 1e-8
 AMBIENT_UNTIL_TFB = 0.3
@@ -203,11 +206,11 @@ def mode_settings(mode: int) -> RunConfig:
         raise ValueError("mode must be 1 (1e4), 2 (1e5), or 3 (1e6)") from exc
 
 
-def needs_reference_frame(run: str, path: Path) -> bool:
+def needs_reference_frame(run: str, path: str) -> bool:
     """Match the dataset-specific switch used by works/shock-tde/E-t.py."""
     if run == "1e6":
-        return path.parent.name == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", path.name) is not None
+        return os.path.basename(os.path.dirname(path)) == "TEMPTDE"
+    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
 
 
 def window_bounds(config: RunConfig, window: str = "proposed") -> tuple:
@@ -243,8 +246,8 @@ def color_limits(vmax: float, decades: int) -> tuple[float, float]:
     return vmax / 10**decades, vmax
 
 
-def frame_complete(path: Path) -> bool:
-    return path.is_file() and path.stat().st_size > 0
+def frame_complete(path: str) -> bool:
+    return os.path.isfile(path) and os.path.getsize(path) > 0
 
 
 def _time_scalar(snapshot):
@@ -292,7 +295,7 @@ def frame_durations(times, fps: int):
 
 
 def project_snapshot(
-    path: Path,
+    path: str,
     config: RunConfig,
     quality: Quality,
     window: str,
@@ -342,7 +345,7 @@ def render_projection(
     config: RunConfig,
     quality: Quality,
     field: FieldConfig,
-    output: Path,
+    output: str,
     window: str,
     vmax: float,
 ) -> None:
@@ -352,7 +355,7 @@ def render_projection(
         floor = u.unyt_quantity(vmin, field.unit).in_units(projected.units)
         projected[(projected <= 0) | ~np.isfinite(projected)] = floor
     annotation = time_annotation(time, config)
-    output.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(output), exist_ok=True)
     richrender.projection_image(
         projected,
         output,
@@ -386,7 +389,7 @@ _WORKER_STATE: dict = {}
 def _render_task(task) -> int:
     index, path = task
     state = _WORKER_STATE
-    destination = state["frames_dir"] / f"frame_{index:05d}.png"
+    destination = os.path.join(state["frames_dir"], f"frame_{index:05d}.png")
     if frame_complete(destination) and not state["overwrite"]:
         return index
     projected, time = project_snapshot(
@@ -411,7 +414,7 @@ def _render_task(task) -> int:
     return index
 
 
-def _contact_sheet(paths: list[Path], titles: list[str], output: Path) -> None:
+def _contact_sheet(paths: list[str], titles: list[str], output: str) -> None:
     import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(1, len(paths), figsize=(5.2 * len(paths), 4.1), dpi=180)
@@ -421,7 +424,7 @@ def _contact_sheet(paths: list[Path], titles: list[str], output: Path) -> None:
         ax.set_title(title)
         ax.axis("off")
     fig.tight_layout(pad=0.4)
-    output.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(output), exist_ok=True)
     fig.savefig(output, dpi=180)
     plt.close(fig)
 
@@ -432,8 +435,8 @@ def make_preview_examples(
     field: FieldConfig,
     snapnums,
     paths,
-    frames_dir: Path,
-    output_dir: Path,
+    frames_dir: str,
+    output_dir: str,
     workers: int,
     overwrite: bool,
     vmax: float,
@@ -441,19 +444,19 @@ def make_preview_examples(
 ) -> None:
     indices = [0, len(paths) // 2, len(paths) - 1]
     _contact_sheet(
-        [frames_dir / f"frame_{index:05d}.png" for index in indices],
+        [os.path.join(frames_dir, f"frame_{index:05d}.png") for index in indices],
         [
             f"early: snap {snapnums[indices[0]]}",
             f"middle: snap {snapnums[indices[1]]}",
             f"late: snap {snapnums[indices[2]]}",
         ],
-        output_dir / "timeline.png",
+        os.path.join(output_dir, "timeline.png"),
     )
 
     middle = indices[1]
     comparison_paths = []
     for window in WINDOWS:
-        destination = output_dir / "window-examples" / f"{window}.png"
+        destination = os.path.join(output_dir, "window-examples", f"{window}.png")
         comparison_paths.append(destination)
         if frame_complete(destination) and not overwrite:
             continue
@@ -466,7 +469,7 @@ def make_preview_examples(
     _contact_sheet(
         comparison_paths,
         ["proposed", "taller", "wider"],
-        output_dir / "window-comparison.png",
+        os.path.join(output_dir, "window-comparison.png"),
     )
 
 
@@ -475,7 +478,7 @@ def parse_args(argv=None):
     parser.add_argument("--mode", type=int, required=True, choices=RUNS)
     parser.add_argument("--field", choices=FIELDS, default="density")
     parser.add_argument("--quality", choices=QUALITIES, default="preview")
-    parser.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
+    parser.add_argument("--output-root", default=OUTPUT_ROOT)
     parser.add_argument("--frame-start", type=int, default=0)
     parser.add_argument("--frame-stop", type=int, default=-1)
     parser.add_argument("--n-jobs", type=int, default=1)
@@ -496,11 +499,13 @@ def main(argv=None) -> int:
     field = FIELDS[args.field]
     vmax = field.vmax if args.vmax is None else args.vmax
     paths = DATAPATHS(config.run)
-    snapnums = [int(path.stem.rsplit("_", 1)[-1]) for path in paths]
-    output_dir = args.output_root / quality.name / config.run
-    field_dir = output_dir if field.name == "density" else output_dir / field.name
-    frames_dir = field_dir / "frames"
-    frames_dir.mkdir(parents=True, exist_ok=True)
+    snapnums = [snapshot_number(path) for path in paths]
+    output_dir = os.path.join(os.path.normpath(args.output_root), quality.name, config.run)
+    field_dir = (
+        output_dir if field.name == "density" else os.path.join(output_dir, field.name)
+    )
+    frames_dir = os.path.join(field_dir, "frames")
+    os.makedirs(frames_dir, exist_ok=True)
 
     start = max(0, args.frame_start)
     stop = len(paths) if args.frame_stop < 0 else min(args.frame_stop, len(paths))
@@ -561,7 +566,7 @@ def main(argv=None) -> int:
             args.ambient_factor,
         )
     if not args.no_encode and complete_run:
-        movie = field_dir / f"faceon_{field.name}_{config.run}.mp4"
+        movie = os.path.join(field_dir, f"faceon_{field.name}_{config.run}.mp4")
         durations = frame_durations(SNAPSHOT_TIMES(config.run), config.fps)
         richrender.encode_movie(
             frames_dir, len(paths), movie, config.fps, durations=durations

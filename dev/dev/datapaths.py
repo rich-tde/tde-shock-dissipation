@@ -1,46 +1,28 @@
 """Paths to the TDE snapshots."""
 
+from functools import cache
+import glob
+from math import pi, sqrt
+import os
 import re
 import warnings
-from functools import cache
-from math import pi, sqrt
-from pathlib import Path
 
 import h5py
 import numpy as np
 
+TDE_DATA = "/data1/projects/pi-rossiem/TDE_data"
 DATADIRS = {
-    "1e4": (
-        Path(
-            "/data1/projects/pi-rossiem/TDE_data/NewSnellius/"
-            "R0.47M0.5BH10000beta1S60ComptonHiRes"
-        ),
-    ),
-    "1e4midres": (
-        Path(
-            "/data1/projects/pi-rossiem/TDE_data/NewSnellius/"
-            "R0.47M0.5BH10000beta1S60Compton"
-        ),
-    ),
-    "1e4lowres": (
-        Path(
-            "/data1/projects/pi-rossiem/TDE_data/"
-            "R0.47M0.5BH10000beta1S60n1.5ComptonLowResNewAMR"
-        ),
-    ),
+    "1e4": (os.path.join(TDE_DATA, "NewSnellius/R0.47M0.5BH10000beta1S60ComptonHiRes"),),
+    "1e4midres": (os.path.join(TDE_DATA, "NewSnellius/R0.47M0.5BH10000beta1S60Compton"),),
+    "1e4lowres": (os.path.join(TDE_DATA, "R0.47M0.5BH10000beta1S60n1.5ComptonLowResNewAMR"),),
     "1e5": (
-        Path(
-            "/data1/projects/pi-rossiem/TDE_data/YujieSnellius/"
-            "R0.47M0.5BH100000beta1S60n1.5ComptonHiResNewAMR"
-        ),
+        os.path.join(TDE_DATA, "YujieSnellius/R0.47M0.5BH100000beta1S60n1.5ComptonHiResNewAMR"),
     ),
-    "1e6": (
-        Path("/data1/projects/pi-rossiem/TDE_data/R0.47M0.5BH1e+06beta1S50n1.5ComptonMG"),
-    ),
+    "1e6": (os.path.join(TDE_DATA, "R0.47M0.5BH1e+06beta1S50n1.5ComptonMG"),),
     "ss24": (
-        Path("/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE"),
-        Path("/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE4"),
-        Path("/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE4_new"),
+        os.path.join(TDE_DATA, "SS24_diag/TEMPTDE"),
+        os.path.join(TDE_DATA, "SS24_diag/TEMPTDE4"),
+        os.path.join(TDE_DATA, "SS24_diag/TEMPTDE4_new"),
     ),
 }
 
@@ -55,29 +37,30 @@ TDE_PARAMETERS = {
 }
 
 
+def snapshot_number(path):
+    """The number ``N`` of ``snap_N.h5``, ``snap_full_N.h5`` or an NPY folder ``snap_N``."""
+    return int(re.search(r"(\d+)(?:\.h5)?$", os.path.basename(os.path.normpath(path))).group(1))
+
+
 def DATAPATHS(run):
     """Return snapshot paths sorted by number for a run in ``DATADIRS``.
 
     ``1e4lowres`` returns NumPy folders; the other runs return HDF5 files.
+    ``snap_full_N.h5`` is preferred when both versions of a snapshot exist.
     """
-
     snapshots = {}
     numpy_folders = run == "1e4lowres"
     for datadir in DATADIRS[run]:
-        for path in datadir.glob("snap_*" if numpy_folders else "snap_*.h5"):
-            match = re.fullmatch(r"snap_(?:full_)?(\d+)(?:\.h5)?", path.name)
-            if match is None or (numpy_folders and not path.is_dir()):
+        for path in glob.glob(os.path.join(datadir, "snap_*" if numpy_folders else "snap_*.h5")):
+            name = os.path.basename(path)
+            match = re.fullmatch(r"snap_(?:full_)?(\d+)(?:\.h5)?", name)
+            if match is None or (numpy_folders and not os.path.isdir(path)):
                 continue
-
             snapnum = int(match.group(1))
-            if datadir.name == "TEMPTDE4" and snapnum >= 820:
+            if os.path.basename(datadir) == "TEMPTDE4" and snapnum >= 820:
                 continue
-
-            # Prefer snap_full when both versions exist.
-            old_path = snapshots.get(snapnum)
-            if old_path is None or "snap_full_" in path.name:
+            if snapnum not in snapshots or name.startswith("snap_full_"):
                 snapshots[snapnum] = path
-
     return [snapshots[snapnum] for snapnum in sorted(snapshots)]
 
 
@@ -87,10 +70,10 @@ def _snapshot_times(run):
     import richio
 
     paths = DATAPATHS(run)
-    snapnums = [int(path.stem.rsplit("_", 1)[1]) for path in paths]
+    snapnums = [snapshot_number(path) for path in paths]
     times = []
     for path in paths:
-        if path.is_dir():
+        if os.path.isdir(path):
             # NPY snapshots store elapsed time in their calibrated fallback unit.
             time = richio.load(path).tfb.to_value(richio.units.tscale)
             times.append(float(np.asarray(time).squeeze()))
