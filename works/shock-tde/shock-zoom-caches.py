@@ -1,354 +1,134 @@
 #!/usr/bin/env python3
 r"""Build compact geometry and field caches for inspecting detected TDE shocks.
 
-Read an existing shock detection and its simulation snapshot, transform
-positions to the black-hole (BH) frame when necessary, and sample nozzle or
-self-intersection views. This command writes numerical caches, not figures.
-The boxes and shifted ballistic orbits are descriptive choices, not an
-automatic classifier. Temperature-jump and pressure-jump Mach estimates differ
-from the fluid-speed diagnostic ``abs(v_z)/c_s``.
+Read an existing shock detection and its simulation snapshot, move positions to
+the black-hole (BH) frame when needed, and sample nozzle or self-intersection
+views. This command writes numerical caches, not figures. The boxes and shifted
+ballistic orbits are descriptive choices, not an automatic classifier.
 
 Input files
 -----------
-Run from ``/home/hey4/rich_tde``. Let ``ROOT`` be
-``data/processed/ShockFinderEdissSelection`` (override ``--result-root``),
-``RUN`` be ``1e4``, ``1e5`` or ``1e6``, and ``NNNN`` a four-digit snapshot number.
+Run from ``/home/hey4/rich_tde``. ``ROOT`` is
+``data/processed/ShockFinderEdissSelection`` (``--result-root``), ``RUN`` is
+``1e4``, ``1e5`` or ``ss24`` and ``NNNN`` a four-digit snapshot number.
 
 ``ROOT/RUN/shockfinder_snap_NNNN.npz``
-    Produced by ``shock-finder-ediss-selection.py``. Required keys are
-    ``snap_path`` (scalar string pointing to raw HDF5), ``time_tfb`` (scalar
-    float), ``surf_idx`` (integer array of shape ``(N,)``), and ``mach_T`` /
-    ``mach_P`` (float arrays of shape ``(N,)`` in the same surface-cell order).
-``snap_path``
-    An existing ``snap_full_<n>.h5`` or ``snap_<n>.h5`` readable by
-    ``richio.load``. Needs coordinates, volume, density, pressure, specific
-    internal energy, dissipation and velocities for the selected products.
+    From ``shock-finder-ediss-selection.py``: ``snap_path``, ``time_tfb``,
+    ``surf_idx`` (N,) and ``mach_T`` / ``mach_P`` (N,) in the same order.
 ``ROOT/analysis/per-cell/RUN_shock_dissipation_snap_NNNN.npz``
-    Needed only for ``--product geometry``; produced by
-    ``0.5-shock-finder-ediss-analysis.ipynb``. Contains ``surf_idx`` and
-    ``shock_power_erg_s``, both shape ``(N,)``. The surface indices must match
-    the detector exactly. Override its directory with ``--per-cell-root``.
+    Only for ``--product geometry``; from ``0.5-shock-finder-ediss-analysis.ipynb``.
+    ``surf_idx`` must equal the detector's; ``shock_power_erg_s`` (N,).
 
 Output files
 ------------
-All files are compressed NumPy archives: load with ``np.load(path)`` and access
-named keys, not table columns. ``N`` is the number of surface cells; values
-with shape ``()`` are zero-dimensional arrays read with ``.item()``. Unless
-stated otherwise, numerical arrays below are ``float64``. ``run`` is a scalar
-Unicode string and ``snapnum`` a scalar integer. No Python objects/pickle or
-unyt units are stored. The default base directory, ``OUT``, is
-``ROOT/analysis/zoom-shocks`` (override ``--output-root``).
+Compressed ``.npz`` under ``OUT = ROOT/analysis/zoom-shocks`` (``--output-root``).
+Grids are indexed ``field[i, j]`` along the first then the second named axis, so
+plot with ``pcolormesh(a, b, field.T)``. Axes exclude the upper box edge.
+Positions are BH-frame; velocities keep the snapshot's stored frame. Logged
+fields are base-10 logs in cgs with non-positive values set to NaN. Mach grids
+are zero where the nearest cell is not a detected surface cell. ``*_rsun`` grid
+axes are in RICH code lengths (``richio.units.lscale``, ≈ R_sun); only the
+geometry file uses physical ``Rsun``.
 
-Grid arrays use ``field[i, j]`` with the first index along the first named
-coordinate, e.g. x then y or orbit position then z. Transpose a grid for
-``pcolormesh(x, y, field.T, shading="auto")``. Spatial sample axes normally
-exclude the upper box boundary. Coordinates are BH-frame; sampled velocities
-retain the snapshot's stored frame (no velocity offset is applied here).
-
-``OUT/cells/RUN_shock_cells_snap_NNNN.npz`` (``--product geometry``)
-    Entries share the detector's ``surf_idx`` order; these indices themselves
-    are not copied into this output.
-
-    ``run``, ``snapnum``
-        Scalar identifiers as described above.
-    ``time_tfb`` : shape ``()``
-        Snapshot time divided by the fallback time, dimensionless.
-    ``r_p_rsun`` : shape ``()``
-        Legacy name for ``r_p / code_length``, dimensionless numerical scale.
-    ``x_rsun``, ``y_rsun``, ``z_rsun`` : shape ``(N,)``
-        BH-frame coordinates converted with unyt to physical ``Rsun``.
-    ``effective_radius_rsun`` : shape ``(N,)``
-        Equal-volume sphere radius ``(3*V/(4*pi))**(1/3)``, physical ``Rsun``.
-    ``mach_T`` : shape ``(N,)``
-        Dimensionless temperature-jump Mach estimate.
-    ``shock_power_erg_s`` : shape ``(N,)``
-        Power assigned to each detected surface cell, in ``erg/s``.
-
-``OUT/self-intersection/RUN/self_intersection_snap_NNNN.npz``
-    ``--product self`` uses ``(Nx, Ny) = (1024, 512)`` and a constant-z slice
-    through the chosen box centre. Keys:
-
-    ``run``, ``snapnum``
-        Scalar identifiers.
-    ``center_rp``, ``half_width_rp`` : shape ``(3,)``
-        Box centre and half widths in ``r_p`` units; entries 0=x, 1=y, 2=z.
-    ``self_intersection_present`` : shape ``()``
-        Boolean for established boxes; float NaN (unknown) for a new custom
-        box. This is a manually assigned label, not a detection result.
-    ``x_rp`` : shape ``(Nx,)``; ``y_rp`` : shape ``(Ny,)``
-        Sample coordinates divided by ``r_p``.
-    ``density``, ``dissipation`` : shape ``(Nx, Ny)``
-        Base-10 logarithms of density in ``g/cm**3`` and volumetric power in
-        ``erg/(s*cm**3)``, respectively. Nonpositive/nonfinite values become
-        NaN. Use ``10.0**data["density"]`` to recover linear density.
-    ``vx_kms``, ``vy_kms`` : shape ``(Nx, Ny)``
-        Stored-frame velocity components in ``km/s``; linear, signed values.
-
-``OUT/nozzle-orbit-zoom50/RUN/nozzle_orbit_zoom50_snap_NNNN.npz``
-    ``--product nozzle`` stores an XY slice at z=0 and a vertical section
-    following the shifted returning orbit. ``(Nu, Nv) = (768, 768)``.
-    The XY slice does not contain density/pressure/dissipation arrays; those
-    physical fields here belong to the orbit section.
-
-    ``run``, ``snapnum``, ``time_tfb``
-        Scalar identifiers and dimensionless time.
-    ``resolution`` : integer, shape ``(2,)``
-        Entries 0=Nu and 1=Nv, for both stored grids.
-    ``nozzle_orbit_view_fraction``, ``nozzle_orbit_box_scale`` : shape ``()``
-        Dimensionless window factors; the former is 0.5.
-    ``nozzle_orbit_radius_scale`` : shape ``()``
-        Dimensionless radial scaling of the orbit.
-    ``nozzle_orbit_phase_deg`` : shape ``()``
-        Angular offset of the sampling window along the integrated orbit,
-        in degrees; this does not rotate the trajectory in Cartesian space.
-    ``nozzle_orbit_center_shift_rsun`` : shape ``()``
-        Sampling-window shift along orbital arc in code-length units
-        (legacy suffix), not a Cartesian x offset.
-    ``nozzle_xy_x_rp``, ``nozzle_xy_y_rp`` : shapes ``(Nu,)``, ``(Nv,)``
-        XY axes divided by ``r_p``.
-    ``nozzle_xy_specific_vertical_kinetic`` : shape ``(Nu, Nv)``
-        ``log10(0.5*v_z**2 / (erg/g))``.
-    ``nozzle_xy_specific_internal_energy`` : shape ``(Nu, Nv)``
-        ``log10(specific_internal_energy / (erg/g))``.
-    ``nozzle_xy_abs_vz_over_cs`` : shape ``(Nu, Nv)``
-        Linear dimensionless vertical-speed/sound-speed ratio.
-    ``nozzle_xy_vx_kms``, ``nozzle_xy_vy_kms`` : shape ``(Nu, Nv)``
-        Linear stored-frame velocity components in ``km/s``.
-    ``nozzle_orbit_phi`` : shape ``(Nu,)``
-        Unwrapped orbit azimuth relative to the returning pericentre, in
-        radians (zero at that pericentre).
-    ``nozzle_orbit_s_rsun`` : shape ``(Nu,)``
-        Signed arc coordinate in code-length units, zero referenced to
-        pericentre: positive before and negative after pericentre along
-        orbital integration. Use it as the horizontal axis for section plots.
-    ``nozzle_orbit_z_rsun`` : shape ``(Nv,)``
-        Vertical axis in code-length units (legacy suffix).
-    ``nozzle_orbit_x_rp``, ``nozzle_orbit_y_rp`` : shape ``(Nu,)``
-        XY location of each orbit sample divided by ``r_p``.
-    ``nozzle_orbit_density``, ``nozzle_orbit_pressure`` : shape ``(Nu, Nv)``
-        ``log10`` of density in ``g/cm**3`` and pressure in ``erg/cm**3``.
-    ``nozzle_orbit_dissipation`` : shape ``(Nu, Nv)``
-        ``log10`` of volumetric dissipation in ``erg/(s*cm**3)``.
-    ``nozzle_orbit_specific_vertical_kinetic`` : shape ``(Nu, Nv)``
-        ``log10(0.5*v_z**2 / (erg/g))``.
-    ``nozzle_orbit_specific_internal_energy`` : shape ``(Nu, Nv)``
-        ``log10(specific_internal_energy / (erg/g))``.
-    ``nozzle_orbit_abs_vz_over_cs`` : shape ``(Nu, Nv)``
-        Linear dimensionless vertical-speed/sound-speed ratio.
-    ``nozzle_orbit_dphi_dt`` : shape ``(Nu, Nv)``
-        Signed stored-frame velocity projected on the orbit tangent, divided
-        by ``ds/dphi``; numerical angular rate in ``1/s``.
-    ``nozzle_orbit_dz_rsun_dt`` : shape ``(Nu, Nv)``
-        ``v_z / code_length`` in ``1/s``; time derivative of the saved z axis.
-    ``nozzle_orbit_mach_P`` : shape ``(Nu, Nv)``
-        Linear pressure-jump Mach estimate from the nearest cell. Zero means
-        that cell is not a detected surface cell, not a zero-speed fluid.
-
-    All logged fields replace nonpositive/nonfinite inputs with NaN. The
-    sound speed uses ``gamma_eff = 1 + P/(rho*sie)`` and
-    ``c_s = sqrt(gamma_eff*P/rho)``.
-
-``OUT/self-mach-max/RUN/self_mach_max_snap_NNNN.npz``
-    ``--product self-mach-max`` bins surface cells within one cell-length, ``V**(1/3)``, of
-    the configured z plane and retains the maximum pressure-jump Mach in
-    each XY bin. ``(Nx, Ny) = (256, 128)``. Keys:
-
-    ``run``, ``snapnum``
-        Scalar identifiers.
-    ``center_rp``, ``half_width_rp`` : shape ``(3,)``
-        XYZ box centre/half widths divided by ``r_p``.
-    ``resolution`` : integer, shape ``(2,)``
-        Entries 0=Nx, 1=Ny.
-    ``mach_min`` : shape ``()``
-        Inclusive dimensionless Mach threshold, currently 1.5.
-    ``x_rp``, ``y_rp`` : shapes ``(Nx,)``, ``(Ny,)``
-        Bin centres divided by ``r_p``; edges are half a spacing either side.
-    ``mach_P_max`` : shape ``(Nx, Ny)``
-        Linear maximum selected Mach per bin; zero means no qualifying cell.
-    ``slab_cell_count``, ``nonzero_pixel_count`` : integer, shape ``()``
-        Counts of selected surface cells and occupied bins, respectively.
-
-``OUT/mach-slices/RUN/mach_P_snap_NNNN.npz`` (``--product mach``)
-    Contains only the applicable groups below. There are no ``run``,
-    ``snapnum`` or ``time_tfb`` keys in this file; identify it by its path.
-    With no applicable geometry, the CLI omits this product by default
-    and rejects an explicit ``--product mach`` request.
-
-    ``nozzle_xy_x_rp``, ``nozzle_xy_y_rp`` : shape ``(768,)``
-        XY axes in ``r_p`` units, present for a configured nozzle case.
-    ``nozzle_xy_mach_P`` : shape ``(768, 768)``
-        Nearest-cell pressure-jump Mach, indexed x then y.
-    ``nozzle_yz_y_rsun``, ``nozzle_yz_z_rsun`` : shape ``(768,)``
-        YZ axes in code-length units, at a fixed x through the nozzle.
-    ``nozzle_yz_mach_P`` : shape ``(768, 768)``
-        Nearest-cell pressure-jump Mach, indexed y then z.
-    ``nozzle_orbit_phi``, ``nozzle_orbit_x_rp``, ``nozzle_orbit_y_rp``
-        Shape ``(768,)``; angle in radians and orbit XY coordinates in ``r_p``.
-    ``nozzle_orbit_z_rsun`` : shape ``(768,)``
-        Vertical orbit-section axis in code-length units.
-    ``nozzle_orbit_density``, ``nozzle_orbit_pressure``
-        Shape ``(768, 768)``; ``log10`` of ``g/cm**3`` and ``erg/cm**3``.
-    ``nozzle_orbit_dissipation`` : shape ``(768, 768)``
-        ``log10`` of ``erg/(s*cm**3)``; nonpositive/nonfinite inputs are NaN
-        for all three logged fields in this group.
-    ``nozzle_orbit_dphi_dt``, ``nozzle_orbit_dz_rsun_dt``
-        Shape ``(768, 768)``; signed coordinate rates in ``1/s`` as above.
-    ``nozzle_orbit_mach_P`` : shape ``(768, 768)``
-        Linear pressure-jump Mach, indexed orbit position then z.
-    ``nozzle_orbit_box_scale``, ``nozzle_orbit_radius_scale``
-        Scalar dimensionless orbit/window factors.
-    ``nozzle_orbit_phase_deg`` : shape ``()``
-        Angular sampling-window offset in degrees (not a Cartesian rotation).
-        This orbit section uses the full window
-        and no centre shift, unlike the zoom50 product; their arrays cannot
-        be overlaid without matching the coordinates.
-    ``self_x_rp``, ``self_y_rp`` : shapes ``(1024,)``, ``(512,)``
-        Self-intersection XY axes divided by ``r_p``, when a box applies.
-    ``self_mach_P`` : shape ``(1024, 512)``
-        Nearest-cell pressure-jump Mach, indexed x then y.
-
-    All Mach grids use zero for non-surface cells. The orbit group here has
-    no ``s_rsun``, internal-energy, vertical-kinetic-energy or sound-speed
-    ratio arrays: use the nozzle zoom50 file for those products.
-
-Unit-name caveat: geometry ``x_rsun/y_rsun/z_rsun/effective_radius_rsun``
-are converted to physical unyt ``Rsun``. Grid/orbit ``*_rsun`` coordinates
-and geometry ``r_p_rsun`` instead use ``richio.units.lscale`` (one RICH
-``code_length``, approximately one solar radius). Recover exact physical
-units with ``unyt_array(values, richio.units.lscale).to("Rsun")``.
+``OUT/cells/RUN_shock_cells_snap_NNNN.npz`` (geometry)
+    ``time_tfb``, ``r_p_rsun`` (code lengths), ``x_rsun``/``y_rsun``/``z_rsun`` and
+    ``effective_radius_rsun = (3V/4π)^(1/3)`` (N,) in Rsun, ``mach_T``,
+    ``shock_power_erg_s``, in the detector's ``surf_idx`` order.
+``OUT/self-intersection/RUN/self_intersection_snap_NNNN.npz`` (self)
+    1024 × 512 xy slice through the box centre: ``center_rp``, ``half_width_rp``
+    (3,), ``self_intersection_present`` (manual label; NaN for a custom box),
+    ``x_rp``, ``y_rp``, logged ``density`` and ``dissipation``, ``vx_kms``, ``vy_kms``.
+``OUT/nozzle-orbit-zoom50/RUN/nozzle_orbit_zoom50_snap_NNNN.npz`` (nozzle)
+    768 × 768. ``nozzle_xy_*``: z = 0 slice with ``x_rp``, ``y_rp``,
+    ``specific_vertical_kinetic`` (log ½v_z²), ``specific_internal_energy`` (log),
+    ``abs_vz_over_cs``, ``vx_kms``, ``vy_kms``. ``nozzle_orbit_*``: vertical
+    section along the returning orbit at half the window, with ``phi`` (rad, zero
+    at pericentre), ``s_rsun`` (signed arc, positive before pericentre), ``z_rsun``,
+    ``x_rp``, ``y_rp``, logged ``density``, ``pressure``, ``dissipation``,
+    ``specific_vertical_kinetic``, ``specific_internal_energy``, linear
+    ``abs_vz_over_cs``, ``dphi_dt`` and ``dz_rsun_dt`` (1/s), ``mach_P``, and the
+    window settings ``view_fraction``, ``box_scale``, ``radius_scale``,
+    ``phase_deg``, ``center_shift_rsun``. ``c_s = sqrt((1 + P/(ρu)) P/ρ)``.
+``OUT/self-mach-max/RUN/self_mach_max_snap_NNNN.npz`` (self-mach-max)
+    Maximum ``mach_P >= mach_min`` (1.5) of surface cells within one cell length
+    ``V^(1/3)`` of the box's z plane, in 256 × 128 xy bins: ``x_rp``, ``y_rp``
+    (bin centres), ``mach_P_max`` (zero = empty), ``slab_cell_count``,
+    ``nonzero_pixel_count``.
+``OUT/mach-slices/RUN/mach_P_snap_NNNN.npz`` (mach)
+    Pressure-jump Mach for the nozzle cases: ``nozzle_xy_*`` (as above),
+    ``nozzle_yz_*`` (x = 13 R_sun slice, axes ``y_rsun``, ``z_rsun``) and the
+    full-window, unshifted orbit section ``nozzle_orbit_*`` (no ``s_rsun``); and
+    ``self_x_rp``, ``self_y_rp``, ``self_mach_P`` for self-intersection boxes.
 
 Usage
 -----
-Use the ``richanalysis`` environment from the repository root::
+::
 
     python works/shock-tde/shock-zoom-caches.py --list-only
     python works/shock-tde/shock-zoom-caches.py --task-index 0 --workers 8
-    python works/shock-tde/shock-zoom-caches.py --run 1e4 --snapnum 77 \
-        --product nozzle
+    python works/shock-tde/shock-zoom-caches.py --run 1e4 --snapnum 77 --product nozzle
     python works/shock-tde/shock-zoom-caches.py --run 1e4 --snapnum 80 \
         --product self --self-center -10 4 0 --self-half-width 7 3.5 2 \
         --output-root data/processed/MyShockZoom
 
-``--task-index`` selects one of four established cases. Repeat ``--product``
-to select products; without it all applicable products are attempted. Self
-products need a configured box. An explicit ``--product nozzle`` enables
-nozzle geometry for a new snapshot. Existing caches passing each product's
-checks are reused; use ``--overwrite`` after changing geometry/upstream data,
-or choose a new output root. Raw snapshots are loaded even for reused caches.
+Repeat ``--product`` to choose products; by default all applicable ones are
+built. Caches that already match the current settings are reused unless
+``--overwrite``.
 
-Loading examples
-----------------
-Load geometry, form an ``(N, 3)`` coordinate array, and sum surface power::
+Loading example
+---------------
+::
 
-    from pathlib import Path
-    import numpy as np
-
-    root = Path("data/processed/ShockFinderEdissSelection/analysis")
-    root = root / "zoom-shocks"
-    path = root / "cells/1e4_shock_cells_snap_0077.npz"
-    with np.load(path) as data:
-        xyz = np.column_stack([data[k] for k in
-                               ("x_rsun", "y_rsun", "z_rsun")])
-        power = data["shock_power_erg_s"]
-        time_tfb = data["time_tfb"].item()
-    # xyz[:, 0/1/2] are x/y/z in physical Rsun; power has shape (N,).
-    total_power_erg_s = power.sum()
-
-Load and plot a self-intersection slice with the correct axis orientation::
-
-    import dev
-    import matplotlib.pyplot as plt
-
-    path = root / "self-intersection/1e4/self_intersection_snap_0077.npz"
-    with np.load(path) as data:
-        x, y = data["x_rp"], data["y_rp"]
-        log_density = data["density"]  # (len(x), len(y)), already log10
-    density_g_cm3 = 10.0**log_density
-    fig, ax = plt.subplots()
-    im = ax.pcolormesh(x, y, log_density.T, shading="auto")
-    ax.set(xlabel="x / r_p", ylabel="y / r_p", aspect="equal")
-    fig.colorbar(im, ax=ax, label="log10 density [g/cm^3]")
-    plt.show()
-
-Load the nozzle section and identify which conditional Mach views exist::
-
-    path = root / "nozzle-orbit-zoom50/1e4"
-    with np.load(path / "nozzle_orbit_zoom50_snap_0077.npz") as data:
-        s = data["nozzle_orbit_s_rsun"]
-        z = data["nozzle_orbit_z_rsun"]
-        log_rho = data["nozzle_orbit_density"]
-        assert log_rho.shape == (len(s), len(z))
-        # Plot pcolormesh(s, z, log_rho.T); axes are in code_length.
-    with np.load(root / "mach-slices/1e4/mach_P_snap_0077.npz") as data:
-        print(data.files)
-        if "self_mach_P" in data:
-            self_mach = data["self_mach_P"]
-    path = root / "self-mach-max/1e4/self_mach_max_snap_0077.npz"
-    with np.load(path) as data:
-        mach_max = data["mach_P_max"]  # (256, 128), x first
-        occupied = mach_max > 0
-        selected_cells = data["slab_cell_count"].item()
+    from dev.io import load_npz
+    root = "data/processed/ShockFinderEdissSelection/analysis/zoom-shocks"
+    orbit = load_npz(f"{root}/nozzle-orbit-zoom50/1e4/nozzle_orbit_zoom50_snap_0077.npz",
+                     prefix="nozzle_orbit_")
+    plt.pcolormesh(orbit["s_rsun"], orbit["z_rsun"], orbit["density"].T)
 """
 
-from __future__ import annotations
-
-import importlib.util
+from dataclasses import dataclass
 import os
-import re
-import sys
-import tempfile
-from pathlib import Path
 
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
-)
-
-
+from dev.datapaths import TDE_PARAMETERS
+from dev.io import cache_matches, load_npz, save_npz_atomic
+from dev.plotting import positive_log10
+from dev.tde import bh_frame_positions, pericenter, returning_orbit_window
 import numpy as np
 import typer
 import unyt as u
-from dev.datapaths import TDE_PARAMETERS
 
-import dev
 import richio
 
-RESULT_ROOT = Path("/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection")
-ANALYSIS_ROOT = RESULT_ROOT / "analysis" / "zoom-shocks"
-PER_CELL_ROOT = RESULT_ROOT / "analysis" / "per-cell"
-SELF_ROOT = ANALYSIS_ROOT / "self-intersection"
-GEOMETRY_ROOT = ANALYSIS_ROOT / "cells"
-MACH_ROOT = ANALYSIS_ROOT / "mach-slices"
-NOZZLE_ZOOM_ROOT = ANALYSIS_ROOT / "nozzle-orbit-zoom50"
-SELF_MACH_MAX_ROOT = ANALYSIS_ROOT / "self-mach-max"
+CODE_LENGTH = richio.units.lscale
+RESULT_ROOT = "/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection"
+PRODUCTS = ("geometry", "self", "nozzle", "self-mach-max", "mach")
+CACHE_NAMES = {
+    "geometry": "cells/{run}_shock_cells_snap_{snapnum:04d}.npz",
+    "self": "self-intersection/{run}/self_intersection_snap_{snapnum:04d}.npz",
+    "nozzle": "nozzle-orbit-zoom50/{run}/nozzle_orbit_zoom50_snap_{snapnum:04d}.npz",
+    "self-mach-max": "self-mach-max/{run}/self_mach_max_snap_{snapnum:04d}.npz",
+    "mach": "mach-slices/{run}/mach_P_snap_{snapnum:04d}.npz",
+}
+
+CASES = (("1e4", 77), ("1e5", 142), ("1e5", 161), ("ss24", 850))
+NOZZLE_CASES = {("1e4", 77), ("1e5", 161), ("ss24", 850)}
+NOZZLE_RESOLUTION = (768, 768)
+NOZZLE_XY_WINDOW_RP = (-1.0, 2.0, -1.5, 1.5)
+REFERENCE_RP = pericenter("1e4")
+NOZZLE_YZ_SLICE_X = 13.0
+NOZZLE_YZ_HALF_WIDTH_RP = 10.0 / REFERENCE_RP
+NOZZLE_YZ_HALF_HEIGHT_RP = 5.0 / REFERENCE_RP
+NOZZLE_YZ_CENTER = {"1e4": 0.0, "1e5": -20.0, "ss24": -80.0}
+NOZZLE_YZ_BOX_SCALE = {"1e4": 1.0, "1e5": 1.2, "ss24": 1.2}
+NOZZLE_ORBIT_VIEW_FRACTION = 0.5
+NOZZLE_ORBIT_RADIUS_SCALE = {"1e4": 0.9, "1e5": 1.0, "ss24": 1.0}
+NOZZLE_ORBIT_PHASE_DEG = {"1e4": 0.0, "1e5": -13.0, "ss24": -13.0}
+NOZZLE_ORBIT_CENTER_SHIFT = {"1e4": -4.0, "1e5": -3.0, "ss24": -40.0}
+
 SELF_RESOLUTION = (1024, 512)
 SELF_MACH_MAX_RESOLUTION = (256, 128)
 SELF_MACH_MIN = 1.5
-NOZZLE_RESOLUTION = (768, 768)
-NOZZLE_ORBIT_VIEW_FRACTION = 0.5
-
-NOZZLE_CASES = {("1e4", 77), ("1e5", 161), ("1e6", 850)}
-NOZZLE_XY_WINDOW_RP = (-1.0, 2.0, -1.5, 1.5)
-REFERENCE_RP_RSUN = 0.47 * (1e4 / 0.5) ** (1 / 3)
-NOZZLE_YZ_SLICE_X_RP = 13.0 / REFERENCE_RP_RSUN
-NOZZLE_YZ_WINDOW_RP = tuple(
-    value / REFERENCE_RP_RSUN for value in (-10.0, 10.0, -5.0, 5.0)
-)
-NOZZLE_YZ_CENTER_RSUN = {"1e4": 0.0, "1e5": -20.0, "1e6": -80.0}
-NOZZLE_YZ_BOX_SCALE = {"1e4": 1.0, "1e5": 1.2, "1e6": 1.2}
-NOZZLE_ORBIT_RADIUS_SCALE = {"1e4": 0.9, "1e5": 1.0, "1e6": 1.0}
-NOZZLE_ORBIT_PHASE_DEG = {"1e4": 0.0, "1e5": -13.0, "1e6": -13.0}
-NOZZLE_ORBIT_CENTER_SHIFT_RSUN = {"1e4": -4.0, "1e5": -3.0, "1e6": -40.0}
-
-CASES = (
-    ("1e4", 77),
-    ("1e5", 142),
-    ("1e5", 161),
-    ("1e6", 850),
-)
-
-# Centers and half widths are the executed values from
-# 0.2-self-intersection-shock-zoom.ipynb, in units of r_p.
+# Executed values from 0.2-self-intersection-shock-zoom.ipynb, in units of r_p.
 SELF_WINDOWS = {
     ("1e4", 77): {
         "center": (-10.583425085843034, 4.01533458408444, -0.0026021542615478465),
@@ -360,627 +140,399 @@ SELF_WINDOWS = {
         "half_width": (15.0, 7.5, 3.0),
         "self_intersection_present": False,
     },
-    ("1e6", 850): {
+    ("ss24", 850): {
         "center": (-81.04461158864497, 12.495227152492864, -0.014973195701669205),
         "half_width": (27.0, 13.5, 5.4),
         "self_intersection_present": True,
     },
 }
 
+NOZZLE_KEYS = [
+    f"nozzle_xy_{name}"
+    for name in (
+        "x_rp",
+        "y_rp",
+        "specific_vertical_kinetic",
+        "specific_internal_energy",
+        "abs_vz_over_cs",
+        "vx_kms",
+        "vy_kms",
+    )
+] + [
+    f"nozzle_orbit_{name}"
+    for name in (
+        "phi",
+        "s_rsun",
+        "z_rsun",
+        "x_rp",
+        "y_rp",
+        "density",
+        "pressure",
+        "dissipation",
+        "specific_vertical_kinetic",
+        "specific_internal_energy",
+        "abs_vz_over_cs",
+        "dphi_dt",
+        "dz_rsun_dt",
+        "mach_P",
+    )
+]
 
-def load_study_script(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
 
+@dataclass
+class Case:
+    run: str
+    snapnum: int
+    snap: object
+    result: dict
+    x: u.unyt_array
+    y: u.unyt_array
+    z: u.unyt_array
+    per_cell_path: str
+    workers: int
 
-def needs_reference_frame(run: str, path: Path) -> bool:
-    if run == "1e6":
-        return path.parent.name == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", path.name) is not None
+    @property
+    def r_p(self):
+        return pericenter(self.run) * CODE_LENGTH
 
+    @property
+    def mach_p(self):
+        """Pressure-jump Mach on every cell, zero off the shock surface."""
+        mach = np.zeros(len(self.snap))
+        mach[self.result["surf_idx"]] = self.result["mach_P"]
+        return mach
 
-def plotting_coordinates(snap, run: str, path: Path):
-    x, y, z = snap.X, snap.Y, snap.Z
-    if needs_reference_frame(run, path):
-        m_bh, m_star, r_star = TDE_PARAMETERS[run]
-        offset = dev.reference_frame_offset(
-            t=snap.time,
-            Mbh=m_bh * richio.units.mscale,
-            Mstar=m_star * richio.units.mscale,
-            Rstar=r_star * richio.units.lscale,
-            beta=1,
+    def grid(self, plane, box, slice_coord, resolution):
+        return self.snap.to_2dgrid(
+            res=resolution,
+            X=self.x,
+            Y=self.y,
+            Z=self.z,
+            plane=plane,
+            slice_coord=slice_coord,
+            box_size=box,
+            volume_selection=True,
+            workers=self.workers,
         )
-        x = x + offset[0]
-        y = y + offset[1]
-    return x, y, z
 
 
-def atomic_save(destination: Path, **arrays) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        dir=destination.parent,
-        prefix=f".{destination.stem}.",
-        suffix=".npz",
-        delete=False,
-    ) as temporary:
-        temporary_path = Path(temporary.name)
-    try:
-        np.savez_compressed(temporary_path, **arrays)
-        os.replace(temporary_path, destination)
-    finally:
-        temporary_path.unlink(missing_ok=True)
-
-
-def geometry_path(run: str, snapnum: int) -> Path:
-    return GEOMETRY_ROOT / f"{run}_shock_cells_snap_{snapnum:04d}.npz"
-
-
-def self_path(run: str, snapnum: int) -> Path:
-    return SELF_ROOT / run / f"self_intersection_snap_{snapnum:04d}.npz"
-
-
-def mach_path(run: str, snapnum: int) -> Path:
-    return MACH_ROOT / run / f"mach_P_snap_{snapnum:04d}.npz"
-
-
-def self_mach_max_path(run: str, snapnum: int) -> Path:
-    return SELF_MACH_MAX_ROOT / run / f"self_mach_max_snap_{snapnum:04d}.npz"
-
-
-def nozzle_zoom_path(run: str, snapnum: int) -> Path:
-    return NOZZLE_ZOOM_ROOT / run / f"nozzle_orbit_zoom50_snap_{snapnum:04d}.npz"
-
-
-def build_geometry(
-    snap, run: str, snapnum: int, result, x, y, z, overwrite: bool = False
-) -> None:
-    destination = geometry_path(run, snapnum)
-    if not overwrite and destination.is_file() and destination.stat().st_size > 0:
-        print(f"Exists {destination}", flush=True)
-        return
-
-    surf_idx = np.asarray(result["surf_idx"], dtype=np.intp)
-    mach = np.asarray(result["mach_T"], dtype="float64")
-    per_cell_path = PER_CELL_ROOT / f"{run}_shock_dissipation_snap_{snapnum:04d}.npz"
-    with np.load(per_cell_path) as cells:
-        if not np.array_equal(surf_idx, cells["surf_idx"]):
-            raise ValueError(f"Surface-cell ordering differs in {per_cell_path}")
-        power = np.asarray(cells["shock_power_erg_s"], dtype="float64")
-
-    volume = snap.volume[surf_idx].to("Rsun**3")
-    effective_radius = (3 * volume / (4 * np.pi)) ** (1 / 3)
-    m_bh, m_star, r_star = TDE_PARAMETERS[run]
-    r_p_rsun = r_star * (m_bh / m_star) ** (1 / 3)
-    atomic_save(
-        destination,
-        run=np.asarray(run),
-        snapnum=np.asarray(snapnum),
-        time_tfb=np.asarray(float(result["time_tfb"])),
-        r_p_rsun=np.asarray(r_p_rsun),
-        x_rsun=np.asarray(x[surf_idx].to_value("Rsun"), dtype="float64"),
-        y_rsun=np.asarray(y[surf_idx].to_value("Rsun"), dtype="float64"),
-        z_rsun=np.asarray(z[surf_idx].to_value("Rsun"), dtype="float64"),
-        effective_radius_rsun=np.asarray(
-            effective_radius.to_value("Rsun"), dtype="float64"
-        ),
-        mach_T=mach,
-        shock_power_erg_s=power,
+def sample_fields(snap, indices):
+    density, pressure, internal_energy, vz = (
+        snap.density[indices],
+        snap.pressure[indices],
+        snap.sie[indices],
+        snap.vz[indices],
     )
-    print(f"Saved {destination}", flush=True)
-
-
-def positive_log10(values) -> np.ndarray:
-    values = np.asarray(values, dtype="float64")
-    return np.log10(np.where(np.isfinite(values) & (values > 0), values, np.nan))
-
-
-def sound_speed(density, pressure, specific_internal_energy):
-    gamma_effective = 1 + pressure / (density * specific_internal_energy)
-    return np.sqrt(gamma_effective * pressure / density)
-
-
-def build_self_slice(
-    snap, run: str, snapnum: int, x, y, z, workers: int, overwrite: bool = False
-) -> None:
-    window = SELF_WINDOWS.get((run, snapnum))
-    if window is None:
-        return
-    destination = self_path(run, snapnum)
-    if not overwrite and destination.is_file() and destination.stat().st_size > 0:
-        with np.load(destination) as cached:
-            if {"vx_kms", "vy_kms"}.issubset(cached.files):
-                print(f"Exists {destination}", flush=True)
-                return
-
-    m_bh, m_star, r_star = TDE_PARAMETERS[run]
-    r_p = r_star * (m_bh / m_star) ** (1 / 3) * richio.units.lscale
-    center = np.asarray(window["center"])
-    half_width = np.asarray(window["half_width"])
-    bounds = tuple(np.r_[center - half_width, center + half_width] * r_p)
-    indices, xspace, yspace = snap.to_2dgrid(
-        res=SELF_RESOLUTION,
-        X=x,
-        Y=y,
-        Z=z,
-        plane="xy",
-        slice_coord=center[2] * r_p,
-        box_size=bounds,
-        volume_selection=True,
-        workers=workers,
-    )
-    atomic_save(
-        destination,
-        run=np.asarray(run),
-        snapnum=np.asarray(snapnum),
-        center_rp=center,
-        half_width_rp=half_width,
-        self_intersection_present=np.asarray(window["self_intersection_present"]),
-        x_rp=np.asarray(xspace / r_p, dtype="float64"),
-        y_rp=np.asarray(yspace / r_p, dtype="float64"),
-        density=positive_log10(snap.density[indices].in_cgs()),
-        dissipation=positive_log10(snap.dissipation[indices].in_cgs()),
-        vx_kms=snap.vx[indices].to_value("km/s"),
-        vy_kms=snap.vy[indices].to_value("km/s"),
-    )
-    print(f"Saved {destination}", flush=True)
-
-
-def build_nozzle_zoom(
-    snap, run: str, snapnum: int, result, x, y, z, workers: int, overwrite: bool = False
-) -> None:
-    if (run, snapnum) not in NOZZLE_CASES:
-        return
-    destination = nozzle_zoom_path(run, snapnum)
-    required = {
-        "nozzle_xy_x_rp",
-        "nozzle_xy_y_rp",
-        "nozzle_xy_specific_vertical_kinetic",
-        "nozzle_xy_specific_internal_energy",
-        "nozzle_xy_abs_vz_over_cs",
-        "nozzle_xy_vx_kms",
-        "nozzle_xy_vy_kms",
-        "nozzle_orbit_phi",
-        "nozzle_orbit_s_rsun",
-        "nozzle_orbit_z_rsun",
-        "nozzle_orbit_x_rp",
-        "nozzle_orbit_y_rp",
-        "nozzle_orbit_density",
-        "nozzle_orbit_pressure",
-        "nozzle_orbit_dissipation",
-        "nozzle_orbit_specific_vertical_kinetic",
-        "nozzle_orbit_specific_internal_energy",
-        "nozzle_orbit_abs_vz_over_cs",
-        "nozzle_orbit_dphi_dt",
-        "nozzle_orbit_dz_rsun_dt",
-        "nozzle_orbit_mach_P",
+    sound_speed = np.sqrt((1 + pressure / (density * internal_energy)) * pressure / density)
+    return {
+        "density": positive_log10(density.in_cgs()),
+        "pressure": positive_log10(pressure.in_cgs()),
+        "dissipation": positive_log10(snap.dissipation[indices].in_cgs()),
+        "specific_vertical_kinetic": positive_log10((0.5 * vz**2).to("erg/g")),
+        "specific_internal_energy": positive_log10(internal_energy.to("erg/g")),
+        "abs_vz_over_cs": (np.abs(vz) / sound_speed).to_value("dimensionless"),
+        "vx_kms": snap.vx[indices].to_value("km/s"),
+        "vy_kms": snap.vy[indices].to_value("km/s"),
     }
-    axes = {
-        "nozzle_xy_x_rp",
-        "nozzle_xy_y_rp",
-        "nozzle_orbit_phi",
-        "nozzle_orbit_s_rsun",
-        "nozzle_orbit_z_rsun",
-        "nozzle_orbit_x_rp",
-        "nozzle_orbit_y_rp",
+
+
+def nozzle_xy_slice(case):
+    xmin, xmax, ymin, ymax = np.multiply(NOZZLE_XY_WINDOW_RP, case.r_p)
+    indices, x, y = case.grid("xy", (xmin, ymin, xmax, ymax), 0 * CODE_LENGTH, NOZZLE_RESOLUTION)
+    return indices, {
+        "x_rp": (x / case.r_p).to_value("dimensionless"),
+        "y_rp": (y / case.r_p).to_value("dimensionless"),
     }
-    if not overwrite and destination.is_file() and destination.stat().st_size > 0:
-        with np.load(destination) as cached:
-            complete = (
-                required.issubset(cached.files)
-                and all(
-                    cached[name].shape == NOZZLE_RESOLUTION for name in required - axes
-                )
-                and all(cached[name].shape == (NOZZLE_RESOLUTION[0],) for name in axes)
-                and "nozzle_orbit_center_shift_rsun" in cached
-                and np.isclose(
-                    float(cached["nozzle_orbit_center_shift_rsun"]),
-                    NOZZLE_ORBIT_CENTER_SHIFT_RSUN[run],
-                )
-            )
-        if complete:
-            print(f"Exists {destination}", flush=True)
-            return
 
-    surf_idx = np.asarray(result["surf_idx"], dtype=np.intp)
-    mach_p = np.zeros(len(snap), dtype="float64")
-    mach_p[surf_idx] = np.asarray(result["mach_P"], dtype="float64")
 
-    m_bh, m_star, r_star = TDE_PARAMETERS[run]
-    r_p = r_star * (m_bh / m_star) ** (1 / 3) * richio.units.lscale
-    xmin, xmax, ymin, ymax = NOZZLE_XY_WINDOW_RP
-    xy_indices, xy_x, xy_y = snap.to_2dgrid(
-        res=NOZZLE_RESOLUTION,
-        X=x,
-        Y=y,
-        Z=z,
-        plane="xy",
-        slice_coord=0 * richio.units.lscale,
-        box_size=(xmin * r_p, ymin * r_p, xmax * r_p, ymax * r_p),
-        volume_selection=True,
-        workers=workers,
-    )
-    xy_density = snap.density[xy_indices].in_cgs()
-    xy_pressure = snap.pressure[xy_indices].in_cgs()
-    xy_sie = snap.sie[xy_indices].to("erg/g")
-    xy_vz = snap.vz[xy_indices].in_cgs()
-    xy_cs = sound_speed(xy_density, xy_pressure, xy_sie)
+def self_slice(case):
+    window = SELF_WINDOWS[(case.run, case.snapnum)]
+    center, half_width = np.asarray(window["center"]), np.asarray(window["half_width"])
+    box = tuple(np.r_[center - half_width, center + half_width] * case.r_p)
+    indices, x, y = case.grid("xy", box, center[2] * case.r_p, SELF_RESOLUTION)
+    return indices, {
+        "x_rp": (x / case.r_p).to_value("dimensionless"),
+        "y_rp": (y / case.r_p).to_value("dimensionless"),
+    }
 
-    orbit_module = load_study_script(
-        "nozzle_yz_slices_for_zoom50",
-        Path(__file__).with_name("nozzle-yz-slices.py"),
-    )
-    mode = ("1e4", "1e5", "1e6").index(run) + 1
-    config = orbit_module.mode_settings(mode)
-    box_scale = NOZZLE_YZ_BOX_SCALE[run] * NOZZLE_ORBIT_VIEW_FRACTION
-    radius_scale = NOZZLE_ORBIT_RADIUS_SCALE[run]
-    phase_deg = NOZZLE_ORBIT_PHASE_DEG[run]
-    center_shift_rsun = NOZZLE_ORBIT_CENTER_SHIFT_RSUN[run]
-    time_tfb = float(result["time_tfb"])
-    phi, orbit_x_rp, orbit_y_rp, orbit_s_rsun = orbit_module.returning_orbit_grid(
-        config,
-        time_tfb,
-        box_scale,
+
+def orbit_section(case, box_scale, center_shift):
+    """Nearest cells on a vertical section following the returning orbit."""
+    run = case.run
+    phi, x_rp, y_rp, s = returning_orbit_window(
+        run,
+        case.result["time_tfb"],
+        box_scale * NOZZLE_YZ_HALF_WIDTH_RP,
         NOZZLE_RESOLUTION[0],
-        radius_scale=radius_scale,
-        phase_offset_deg=phase_deg,
-        center_shift_rsun=center_shift_rsun,
-        return_s_rsun=True,
+        NOZZLE_ORBIT_RADIUS_SCALE[run],
+        NOZZLE_ORBIT_PHASE_DEG[run],
+        center_shift,
     )
-    r_sun = richio.units.lscale
-    zmin, zmax = orbit_module.YZ_WINDOW_RP[2:]
-    z_rsun = np.linspace(
-        box_scale * zmin * config.r_p,
-        box_scale * zmax * config.r_p,
-        NOZZLE_RESOLUTION[1],
-        endpoint=False,
-    )
-    orbit_x = orbit_x_rp * r_p
-    orbit_y = orbit_y_rp * r_p
-    grid_x, grid_z = np.meshgrid(orbit_x, z_rsun * r_sun, indexing="ij")
-    grid_y = np.broadcast_to(orbit_y.to_value(r_sun)[:, None], grid_x.shape)
-    query_points = u.unyt_array(
-        np.stack([grid_x.to_value(r_sun), grid_y, grid_z.to_value(r_sun)], axis=-1),
-        r_sun,
-    )
-    padding = 0.1 * r_p
-    selection = (
-        (x > orbit_x.min() - padding)
-        & (x < orbit_x.max() + padding)
-        & (y > orbit_y.min() - padding)
-        & (y < orbit_y.max() + padding)
-        & (z > z_rsun[0] * r_sun - padding)
-        & (z < z_rsun[-1] * r_sun + padding)
-    )
-    orbit_indices = snap.nearest_indices(
-        query_points,
-        X=x,
-        Y=y,
-        Z=z,
-        selection=selection,
-        workers=workers,
-    )
-    orbit_density = snap.density[orbit_indices].in_cgs()
-    orbit_pressure = snap.pressure[orbit_indices].in_cgs()
-    orbit_sie = snap.sie[orbit_indices].to("erg/g")
-    orbit_vz = snap.vz[orbit_indices].in_cgs()
-    orbit_cs = sound_speed(orbit_density, orbit_pressure, orbit_sie)
+    height = box_scale * NOZZLE_YZ_HALF_HEIGHT_RP * pericenter(run)
+    z_axis = np.linspace(-height, height, NOZZLE_RESOLUTION[1], endpoint=False)
+    orbit_x, orbit_y = x_rp * case.r_p, y_rp * case.r_p
 
-    dx_dphi = np.gradient(orbit_x, phi)
-    dy_dphi = np.gradient(orbit_y, phi)
+    points = np.stack(
+        np.broadcast_arrays(orbit_x.value[:, None], orbit_y.value[:, None], z_axis[None, :]),
+        axis=-1,
+    )
+    padding = 0.1 * case.r_p
+    nearby = (
+        (case.x > orbit_x.min() - padding)
+        & (case.x < orbit_x.max() + padding)
+        & (case.y > orbit_y.min() - padding)
+        & (case.y < orbit_y.max() + padding)
+        & (case.z > (z_axis[0] * CODE_LENGTH - padding))
+        & (case.z < (z_axis[-1] * CODE_LENGTH + padding))
+    )
+    indices = case.snap.nearest_indices(
+        points * CODE_LENGTH, X=case.x, Y=case.y, Z=case.z, selection=nearby, workers=case.workers
+    )
+
+    dx_dphi, dy_dphi = np.gradient(orbit_x, phi), np.gradient(orbit_y, phi)
     ds_dphi = np.hypot(dx_dphi, dy_dphi)
-    tangent_x = dx_dphi / ds_dphi
-    tangent_y = dy_dphi / ds_dphi
-    tangent_speed = (
-        snap.vx[orbit_indices] * tangent_x[:, None]
-        + snap.vy[orbit_indices] * tangent_y[:, None]
-    )
-    atomic_save(
-        destination,
-        run=np.asarray(run),
-        snapnum=np.asarray(snapnum),
-        time_tfb=np.asarray(time_tfb),
-        resolution=np.asarray(NOZZLE_RESOLUTION),
-        nozzle_orbit_view_fraction=np.asarray(NOZZLE_ORBIT_VIEW_FRACTION),
-        nozzle_orbit_box_scale=np.asarray(box_scale),
-        nozzle_orbit_radius_scale=np.asarray(radius_scale),
-        nozzle_orbit_phase_deg=np.asarray(phase_deg),
-        nozzle_orbit_center_shift_rsun=np.asarray(center_shift_rsun),
-        nozzle_xy_x_rp=np.asarray(xy_x / r_p, dtype="float64"),
-        nozzle_xy_y_rp=np.asarray(xy_y / r_p, dtype="float64"),
-        nozzle_xy_specific_vertical_kinetic=positive_log10(
-            (0.5 * xy_vz**2).to("erg/g")
-        ),
-        nozzle_xy_specific_internal_energy=positive_log10(xy_sie),
-        nozzle_xy_abs_vz_over_cs=np.asarray(np.abs(xy_vz) / xy_cs, dtype="float64"),
-        nozzle_xy_vx_kms=snap.vx[xy_indices].to_value("km/s"),
-        nozzle_xy_vy_kms=snap.vy[xy_indices].to_value("km/s"),
-        nozzle_orbit_phi=np.asarray(phi, dtype="float64"),
-        nozzle_orbit_s_rsun=np.asarray(orbit_s_rsun, dtype="float64"),
-        nozzle_orbit_z_rsun=np.asarray(z_rsun, dtype="float64"),
-        nozzle_orbit_x_rp=np.asarray(orbit_x_rp, dtype="float64"),
-        nozzle_orbit_y_rp=np.asarray(orbit_y_rp, dtype="float64"),
-        nozzle_orbit_density=positive_log10(orbit_density),
-        nozzle_orbit_pressure=positive_log10(orbit_pressure),
-        nozzle_orbit_dissipation=positive_log10(
-            snap.dissipation[orbit_indices].in_cgs()
-        ),
-        nozzle_orbit_specific_vertical_kinetic=positive_log10(
-            (0.5 * orbit_vz**2).to("erg/g")
-        ),
-        nozzle_orbit_specific_internal_energy=positive_log10(orbit_sie),
-        nozzle_orbit_abs_vz_over_cs=np.asarray(
-            np.abs(orbit_vz) / orbit_cs, dtype="float64"
-        ),
-        nozzle_orbit_dphi_dt=(tangent_speed / ds_dphi[:, None]).to_value("1/s"),
-        nozzle_orbit_dz_rsun_dt=(orbit_vz / r_sun).to_value("1/s"),
-        nozzle_orbit_mach_P=mach_p[orbit_indices],
-    )
-    print(f"Saved {destination}", flush=True)
+    along_orbit = (
+        case.snap.vx[indices] * dx_dphi[:, None] + case.snap.vy[indices] * dy_dphi[:, None]
+    ) / ds_dphi[:, None]
+    geometry = {
+        "phi": phi,
+        "s_rsun": s,
+        "z_rsun": z_axis,
+        "x_rp": x_rp,
+        "y_rp": y_rp,
+        "dphi_dt": (along_orbit / ds_dphi[:, None]).to_value("1/s"),
+        "dz_rsun_dt": (case.snap.vz[indices] / CODE_LENGTH).to_value("1/s"),
+        "box_scale": box_scale,
+        "radius_scale": NOZZLE_ORBIT_RADIUS_SCALE[run],
+        "phase_deg": NOZZLE_ORBIT_PHASE_DEG[run],
+    }
+    return indices, geometry
 
 
-def build_self_mach_max(
-    snap, run: str, snapnum: int, result, x, y, z, overwrite: bool = False
-) -> None:
-    window = SELF_WINDOWS.get((run, snapnum))
-    if window is None:
-        return
-    destination = self_mach_max_path(run, snapnum)
-    if not overwrite and destination.is_file() and destination.stat().st_size > 0:
-        with np.load(destination) as cached:
-            complete = (
-                "mach_P_max" in cached
-                and cached["mach_P_max"].shape == SELF_MACH_MAX_RESOLUTION
-                and "mach_min" in cached
-                and np.isclose(float(cached["mach_min"]), SELF_MACH_MIN)
-            )
-        if complete:
-            print(f"Exists {destination}", flush=True)
-            return
+def prefixed(prefix, arrays):
+    return {f"{prefix}{name}": value for name, value in arrays.items()}
 
-    m_bh, m_star, r_star = TDE_PARAMETERS[run]
-    r_p = r_star * (m_bh / m_star) ** (1 / 3) * richio.units.lscale
-    center = np.asarray(window["center"])
-    half_width = np.asarray(window["half_width"])
-    nx, ny = SELF_MACH_MAX_RESOLUTION
-    grid_x = np.linspace(
-        center[0] - half_width[0],
-        center[0] + half_width[0],
-        nx,
-        endpoint=False,
-    )
-    grid_y = np.linspace(
-        center[1] - half_width[1],
-        center[1] + half_width[1],
-        ny,
-        endpoint=False,
-    )
-    dx = grid_x[1] - grid_x[0]
-    dy = grid_y[1] - grid_y[0]
-    x_edges = np.linspace(grid_x[0] - 0.5 * dx, grid_x[-1] + 0.5 * dx, nx + 1)
-    y_edges = np.linspace(grid_y[0] - 0.5 * dy, grid_y[-1] + 0.5 * dy, ny + 1)
 
-    surf_idx = np.asarray(result["surf_idx"], dtype=np.intp)
-    mach_p = np.asarray(result["mach_P"], dtype="float64")
-    surface_x = np.asarray(x[surf_idx] / r_p, dtype="float64")
-    surface_y = np.asarray(y[surf_idx] / r_p, dtype="float64")
-    surface_z = z[surf_idx]
-    surface_length = snap.volume[surf_idx] ** (1 / 3)
-    slab = np.abs(surface_z - center[2] * r_p) < surface_length
+def build_geometry(case):
+    surface = case.result["surf_idx"]
+    with np.load(case.per_cell_path) as cells:
+        if not np.array_equal(surface, cells["surf_idx"]):
+            raise ValueError(f"Surface-cell ordering differs in {case.per_cell_path}")
+        power = cells["shock_power_erg_s"]
+    effective_radius = (3 * case.snap.volume[surface] / (4 * np.pi)) ** (1 / 3)
+    return {
+        "run": case.run,
+        "snapnum": case.snapnum,
+        "time_tfb": case.result["time_tfb"],
+        "r_p_rsun": pericenter(case.run),
+        "x_rsun": case.x[surface].to_value("Rsun"),
+        "y_rsun": case.y[surface].to_value("Rsun"),
+        "z_rsun": case.z[surface].to_value("Rsun"),
+        "effective_radius_rsun": effective_radius.to_value("Rsun"),
+        "mach_T": case.result["mach_T"],
+        "shock_power_erg_s": power,
+    }
+
+
+def build_self(case):
+    window = SELF_WINDOWS[(case.run, case.snapnum)]
+    indices, axes = self_slice(case)
+    fields = sample_fields(case.snap, indices)
+    return {
+        "run": case.run,
+        "snapnum": case.snapnum,
+        "center_rp": np.asarray(window["center"]),
+        "half_width_rp": np.asarray(window["half_width"]),
+        "self_intersection_present": window["self_intersection_present"],
+        **axes,
+        **{name: fields[name] for name in ("density", "dissipation", "vx_kms", "vy_kms")},
+    }
+
+
+def build_nozzle(case):
+    xy_indices, xy_axes = nozzle_xy_slice(case)
+    xy_fields = sample_fields(case.snap, xy_indices)
+    box_scale = NOZZLE_YZ_BOX_SCALE[case.run] * NOZZLE_ORBIT_VIEW_FRACTION
+    center_shift = NOZZLE_ORBIT_CENTER_SHIFT[case.run]
+    orbit_indices, orbit = orbit_section(case, box_scale, center_shift)
+    orbit_fields = sample_fields(case.snap, orbit_indices)
+    del orbit_fields["vx_kms"], orbit_fields["vy_kms"]
+    xy_names = (
+        "specific_vertical_kinetic",
+        "specific_internal_energy",
+        "abs_vz_over_cs",
+        "vx_kms",
+        "vy_kms",
+    )
+    return {
+        "run": case.run,
+        "snapnum": case.snapnum,
+        "time_tfb": case.result["time_tfb"],
+        "resolution": np.asarray(NOZZLE_RESOLUTION),
+        **prefixed("nozzle_xy_", xy_axes | {name: xy_fields[name] for name in xy_names}),
+        **prefixed(
+            "nozzle_orbit_",
+            orbit
+            | orbit_fields
+            | {
+                "view_fraction": NOZZLE_ORBIT_VIEW_FRACTION,
+                "center_shift_rsun": center_shift,
+                "mach_P": case.mach_p[orbit_indices],
+            },
+        ),
+    }
+
+
+def build_self_mach_max(case):
+    window = SELF_WINDOWS[(case.run, case.snapnum)]
+    center, half_width = np.asarray(window["center"]), np.asarray(window["half_width"])
+    centres, edges = zip(
+        *(
+            bin_centres_and_edges(center[axis], half_width[axis], SELF_MACH_MAX_RESOLUTION[axis])
+            for axis in (0, 1)
+        )
+    )
+
+    surface = case.result["surf_idx"]
+    mach = case.result["mach_P"]
+    surface_x = (case.x[surface] / case.r_p).to_value("dimensionless")
+    surface_y = (case.y[surface] / case.r_p).to_value("dimensionless")
+    in_slab = np.abs(case.z[surface] - center[2] * case.r_p) < case.snap.volume[surface] ** (1 / 3)
     selected = (
-        slab
+        in_slab
         & np.isfinite(surface_x)
         & np.isfinite(surface_y)
-        & np.isfinite(mach_p)
-        & (mach_p >= SELF_MACH_MIN)
-        & (surface_x >= x_edges[0])
-        & (surface_x < x_edges[-1])
-        & (surface_y >= y_edges[0])
-        & (surface_y < y_edges[-1])
+        & np.isfinite(mach)
+        & (mach >= SELF_MACH_MIN)
+        & (surface_x >= edges[0][0])
+        & (surface_x < edges[0][-1])
+        & (surface_y >= edges[1][0])
+        & (surface_y < edges[1][-1])
     )
-
-    x_bin = np.searchsorted(x_edges, surface_x[selected], side="right") - 1
-    y_bin = np.searchsorted(y_edges, surface_y[selected], side="right") - 1
-    mach_max = np.zeros(SELF_MACH_MAX_RESOLUTION, dtype="float64")
-    np.maximum.at(mach_max, (x_bin, y_bin), mach_p[selected])
-
-    atomic_save(
-        destination,
-        run=np.asarray(run),
-        snapnum=np.asarray(snapnum),
-        center_rp=center,
-        half_width_rp=half_width,
-        resolution=np.asarray(SELF_MACH_MAX_RESOLUTION),
-        mach_min=np.asarray(SELF_MACH_MIN),
-        x_rp=grid_x,
-        y_rp=grid_y,
-        mach_P_max=mach_max,
-        slab_cell_count=np.asarray(np.count_nonzero(selected)),
-        nonzero_pixel_count=np.asarray(np.count_nonzero(mach_max)),
+    bins = tuple(
+        np.searchsorted(axis_edges, values[selected], side="right") - 1
+        for axis_edges, values in zip(edges, (surface_x, surface_y))
     )
+    mach_max = np.zeros(SELF_MACH_MAX_RESOLUTION)
+    np.maximum.at(mach_max, bins, mach[selected])
     print(
-        f"Saved {destination}: {np.count_nonzero(selected):,} slab shock cells with "
-        f"M_P >= {SELF_MACH_MIN:g}, "
-        f"{np.count_nonzero(mach_max):,} nonzero pixels",
-        flush=True,
+        f"{np.count_nonzero(selected):,} slab shock cells with M_P >= {SELF_MACH_MIN:g}, "
+        f"{np.count_nonzero(mach_max):,} nonzero pixels"
     )
+    return {
+        "run": case.run,
+        "snapnum": case.snapnum,
+        "center_rp": center,
+        "half_width_rp": half_width,
+        "resolution": np.asarray(SELF_MACH_MAX_RESOLUTION),
+        "mach_min": SELF_MACH_MIN,
+        "x_rp": centres[0],
+        "y_rp": centres[1],
+        "mach_P_max": mach_max,
+        "slab_cell_count": np.count_nonzero(selected),
+        "nonzero_pixel_count": np.count_nonzero(mach_max),
+    }
 
 
-def build_mach_slices(
-    snap, run: str, snapnum: int, result, x, y, z, workers: int, overwrite: bool = False
-) -> None:
-    destination = mach_path(run, snapnum)
-    required = set()
-    if (run, snapnum) in NOZZLE_CASES:
-        required.update({"nozzle_orbit_mach_P", "nozzle_orbit_pressure"})
-    if (run, snapnum) in SELF_WINDOWS:
-        required.add("self_mach_P")
-    if not overwrite and destination.is_file() and destination.stat().st_size > 0:
-        with np.load(destination) as cached:
-            complete = required.issubset(cached.files)
-            if (run, snapnum) in NOZZLE_CASES and complete:
-                complete = np.isclose(
-                    float(cached["nozzle_orbit_radius_scale"]),
-                    NOZZLE_ORBIT_RADIUS_SCALE[run],
-                )
-            if complete:
-                print(f"Exists {destination}", flush=True)
-                return
+def bin_centres_and_edges(center, half_width, count):
+    centres = np.linspace(center - half_width, center + half_width, count, endpoint=False)
+    step = centres[1] - centres[0]
+    return centres, np.linspace(centres[0] - step / 2, centres[-1] + step / 2, count + 1)
 
-    surf_idx = np.asarray(result["surf_idx"], dtype=np.intp)
-    mach_p = np.zeros(len(snap), dtype="float64")
-    mach_p[surf_idx] = np.asarray(result["mach_P"], dtype="float64")
 
-    m_bh, m_star, r_star = TDE_PARAMETERS[run]
-    r_p = r_star * (m_bh / m_star) ** (1 / 3) * richio.units.lscale
+def build_mach(case):
+    mach = case.mach_p
     arrays = {}
+    if (case.run, case.snapnum) in NOZZLE_CASES:
+        indices, axes = nozzle_xy_slice(case)
+        arrays |= prefixed("nozzle_xy_", axes | {"mach_P": mach[indices]})
 
-    if (run, snapnum) in NOZZLE_CASES:
-        xmin, xmax, ymin, ymax = NOZZLE_XY_WINDOW_RP
-        indices, grid_x, grid_y = snap.to_2dgrid(
-            res=NOZZLE_RESOLUTION,
-            X=x,
-            Y=y,
-            Z=z,
-            plane="xy",
-            slice_coord=0 * richio.units.lscale,
-            box_size=(xmin * r_p, ymin * r_p, xmax * r_p, ymax * r_p),
-            volume_selection=True,
-            workers=workers,
+        scale = NOZZLE_YZ_BOX_SCALE[case.run]
+        y_center = NOZZLE_YZ_CENTER[case.run] * CODE_LENGTH
+        half_width, half_height = (
+            scale * NOZZLE_YZ_HALF_WIDTH_RP * case.r_p,
+            scale * NOZZLE_YZ_HALF_HEIGHT_RP * case.r_p,
         )
-        arrays.update(
-            nozzle_xy_x_rp=np.asarray(grid_x / r_p, dtype="float64"),
-            nozzle_xy_y_rp=np.asarray(grid_y / r_p, dtype="float64"),
-            nozzle_xy_mach_P=mach_p[indices],
+        box = (y_center - half_width, -half_height, y_center + half_width, half_height)
+        indices, y, z = case.grid(
+            "yz", box, NOZZLE_YZ_SLICE_X / REFERENCE_RP * case.r_p, NOZZLE_RESOLUTION
         )
-
-        ymin, ymax, zmin, zmax = NOZZLE_YZ_WINDOW_RP
-        scale = NOZZLE_YZ_BOX_SCALE[run]
-        y_center = NOZZLE_YZ_CENTER_RSUN[run] * richio.units.lscale
-        indices, grid_y, grid_z = snap.to_2dgrid(
-            res=NOZZLE_RESOLUTION,
-            X=x,
-            Y=y,
-            Z=z,
-            plane="yz",
-            slice_coord=NOZZLE_YZ_SLICE_X_RP * r_p,
-            box_size=(
-                scale * ymin * r_p + y_center,
-                scale * zmin * r_p,
-                scale * ymax * r_p + y_center,
-                scale * zmax * r_p,
-            ),
-            volume_selection=True,
-            workers=workers,
-        )
-        arrays.update(
-            nozzle_yz_y_rsun=np.asarray(grid_y / richio.units.lscale, dtype="float64"),
-            nozzle_yz_z_rsun=np.asarray(grid_z / richio.units.lscale, dtype="float64"),
-            nozzle_yz_mach_P=mach_p[indices],
+        arrays |= prefixed(
+            "nozzle_yz_",
+            {
+                "y_rsun": y.to_value(CODE_LENGTH),
+                "z_rsun": z.to_value(CODE_LENGTH),
+                "mach_P": mach[indices],
+            },
         )
 
-        orbit_module = load_study_script(
-            "nozzle_yz_slices_for_shocks",
-            Path(__file__).with_name("nozzle-yz-slices.py"),
-        )
-        mode = ("1e4", "1e5", "1e6").index(run) + 1
-        config = orbit_module.mode_settings(mode)
-        box_scale = NOZZLE_YZ_BOX_SCALE[run]
-        radius_scale = NOZZLE_ORBIT_RADIUS_SCALE[run]
-        phase_deg = NOZZLE_ORBIT_PHASE_DEG[run]
-        time_tfb = float(result["time_tfb"])
-        phi, orbit_x_rp, orbit_y_rp = orbit_module.returning_orbit_grid(
-            config,
-            time_tfb,
-            box_scale,
-            NOZZLE_RESOLUTION[0],
-            radius_scale=radius_scale,
-            phase_offset_deg=phase_deg,
-        )
-        r_sun = richio.units.lscale
-        zmin, zmax = orbit_module.YZ_WINDOW_RP[2:]
-        z_rsun = np.linspace(
-            box_scale * zmin * config.r_p,
-            box_scale * zmax * config.r_p,
-            NOZZLE_RESOLUTION[1],
-            endpoint=False,
-        )
-        orbit_x = orbit_x_rp * r_p
-        orbit_y = orbit_y_rp * r_p
-        grid_x, grid_z = np.meshgrid(orbit_x, z_rsun * r_sun, indexing="ij")
-        grid_y = np.broadcast_to(orbit_y.to_value(r_sun)[:, None], grid_x.shape)
-        query_points = u.unyt_array(
-            np.stack([grid_x.to_value(r_sun), grid_y, grid_z.to_value(r_sun)], axis=-1),
-            r_sun,
-        )
-        padding = 0.1 * r_p
-        selection = (
-            (x > orbit_x.min() - padding)
-            & (x < orbit_x.max() + padding)
-            & (y > orbit_y.min() - padding)
-            & (y < orbit_y.max() + padding)
-            & (z > z_rsun[0] * r_sun - padding)
-            & (z < z_rsun[-1] * r_sun + padding)
-        )
-        indices = snap.nearest_indices(
-            query_points,
-            X=x,
-            Y=y,
-            Z=z,
-            selection=selection,
-            workers=workers,
-        )
-        dx_dphi = np.gradient(orbit_x, phi)
-        dy_dphi = np.gradient(orbit_y, phi)
-        ds_dphi = np.hypot(dx_dphi, dy_dphi)
-        tangent_x = dx_dphi / ds_dphi
-        tangent_y = dy_dphi / ds_dphi
-        tangent_speed = (
-            snap.vx[indices] * tangent_x[:, None]
-            + snap.vy[indices] * tangent_y[:, None]
-        )
-        arrays.update(
-            nozzle_orbit_phi=np.asarray(phi, dtype="float64"),
-            nozzle_orbit_z_rsun=np.asarray(z_rsun, dtype="float64"),
-            nozzle_orbit_x_rp=np.asarray(orbit_x_rp, dtype="float64"),
-            nozzle_orbit_y_rp=np.asarray(orbit_y_rp, dtype="float64"),
-            nozzle_orbit_density=positive_log10(snap.density[indices].in_cgs()),
-            nozzle_orbit_pressure=positive_log10(snap.pressure[indices].in_cgs()),
-            nozzle_orbit_dissipation=positive_log10(snap.dissipation[indices].in_cgs()),
-            nozzle_orbit_dphi_dt=(tangent_speed / ds_dphi[:, None]).to_value("1/s"),
-            nozzle_orbit_dz_rsun_dt=(snap.vz[indices] / r_sun).to_value("1/s"),
-            nozzle_orbit_mach_P=mach_p[indices],
-            nozzle_orbit_box_scale=np.asarray(box_scale),
-            nozzle_orbit_radius_scale=np.asarray(radius_scale),
-            nozzle_orbit_phase_deg=np.asarray(phase_deg),
+        indices, orbit = orbit_section(case, scale, center_shift=0.0)
+        del orbit["s_rsun"]
+        fields = sample_fields(case.snap, indices)
+        arrays |= prefixed(
+            "nozzle_orbit_",
+            orbit
+            | {name: fields[name] for name in ("density", "pressure", "dissipation")}
+            | {"mach_P": mach[indices]},
         )
 
-    window = SELF_WINDOWS.get((run, snapnum))
-    if window is not None:
-        center = np.asarray(window["center"])
-        half_width = np.asarray(window["half_width"])
-        bounds = tuple(np.r_[center - half_width, center + half_width] * r_p)
-        indices, grid_x, grid_y = snap.to_2dgrid(
-            res=SELF_RESOLUTION,
-            X=x,
-            Y=y,
-            Z=z,
-            plane="xy",
-            slice_coord=center[2] * r_p,
-            box_size=bounds,
-            volume_selection=True,
-            workers=workers,
-        )
-        arrays.update(
-            self_x_rp=np.asarray(grid_x / r_p, dtype="float64"),
-            self_y_rp=np.asarray(grid_y / r_p, dtype="float64"),
-            self_mach_P=mach_p[indices],
-        )
+    if (case.run, case.snapnum) in SELF_WINDOWS:
+        indices, axes = self_slice(case)
+        arrays |= prefixed("self_", axes | {"mach_P": mach[indices]})
+    return arrays
 
-    atomic_save(destination, **arrays)
-    print(f"Saved {destination}", flush=True)
+
+BUILDERS = {
+    "geometry": build_geometry,
+    "self": build_self,
+    "nozzle": build_nozzle,
+    "self-mach-max": build_self_mach_max,
+    "mach": build_mach,
+}
+
+
+def is_current(product, path, run, snapnum):
+    nozzle = (run, snapnum) in NOZZLE_CASES
+    if product == "self":
+        return cache_matches(path, keys=("vx_kms", "vy_kms"))
+    if product == "nozzle":
+        return cache_matches(
+            path,
+            keys=NOZZLE_KEYS,
+            resolution=NOZZLE_RESOLUTION,
+            nozzle_orbit_center_shift_rsun=NOZZLE_ORBIT_CENTER_SHIFT[run],
+        )
+    if product == "self-mach-max":
+        return cache_matches(
+            path, keys=("mach_P_max",), resolution=SELF_MACH_MAX_RESOLUTION, mach_min=SELF_MACH_MIN
+        )
+    if product == "mach":
+        keys = ["nozzle_orbit_mach_P", "nozzle_orbit_pressure"] * nozzle
+        keys += ["self_mach_P"] * ((run, snapnum) in SELF_WINDOWS)
+        expected = {"nozzle_orbit_radius_scale": NOZZLE_ORBIT_RADIUS_SCALE[run]} if nozzle else {}
+        return cache_matches(path, keys=keys, **expected)
+    return cache_matches(path)
+
+
+def applicable(product, run, snapnum):
+    has_self = (run, snapnum) in SELF_WINDOWS
+    has_nozzle = (run, snapnum) in NOZZLE_CASES
+    return {
+        "self": has_self,
+        "self-mach-max": has_self,
+        "nozzle": has_nozzle,
+        "mach": has_self or has_nozzle,
+    }.get(product, True)
+
+
+def choose_case(task_index, run, snapnum):
+    if task_index is not None:
+        if run is not None or snapnum is not None:
+            raise typer.BadParameter("Choose --task-index or --run/--snapnum.")
+        return CASES[task_index]
+    if run not in TDE_PARAMETERS or snapnum is None:
+        raise typer.BadParameter("Choose --task-index, or --run {1e4,1e5,ss24} --snapnum N.")
+    return run, snapnum
 
 
 def main(
@@ -988,143 +540,101 @@ def main(
         None,
         min=0,
         max=len(CASES) - 1,
-        help="Established case index: 0=1e4/77, 1=1e5/142, 2=1e5/161, 3=1e6/850.",
+        help="Established case: 0=1e4/77, 1=1e5/142, 2=1e5/161, 3=ss24/850.",
     ),
     run: str | None = typer.Option(
-        None, help="Explicit run: 1e4, 1e5, or 1e6; use with --snapnum."
+        None, help="Explicit run: 1e4, 1e5 or ss24; use with --snapnum."
     ),
     snapnum: int | None = typer.Option(
         None, min=0, help="Explicit snapshot number; use with --run."
     ),
     product: list[str] | None = typer.Option(
-        None,
-        help="Repeat: geometry, self, nozzle, self-mach-max, mach; default all.",
+        None, help=f"Repeat: {', '.join(PRODUCTS)}; default all."
     ),
-    result_root: Path = typer.Option(
-        RESULT_ROOT,
-        help="Input shock-finder root containing RUN/shockfinder_snap_NNNN.npz.",
+    result_root: str = typer.Option(
+        RESULT_ROOT, help="Shock-finder root with RUN/shockfinder_snap_NNNN.npz."
     ),
-    output_root: Path | None = typer.Option(
+    output_root: str | None = typer.Option(
         None, help="Cache root; default RESULT_ROOT/analysis/zoom-shocks."
     ),
-    per_cell_root: Path | None = typer.Option(
+    per_cell_root: str | None = typer.Option(
         None, help="Geometry input root; default RESULT_ROOT/analysis/per-cell."
     ),
     self_center: tuple[float, float, float] | None = typer.Option(
-        None,
-        help="Self-intersection box center X Y Z, in r_p; pair with --self-half-width.",
+        None, help="Self-intersection box centre X Y Z in r_p; pair with --self-half-width."
     ),
     self_half_width: tuple[float, float, float] | None = typer.Option(
-        None, help="Self-intersection box half widths X Y Z, in r_p."
+        None, help="Box half widths X Y Z in r_p."
     ),
     workers: int = typer.Option(
-        int(os.environ.get("SLURM_CPUS_PER_TASK", "1")),
-        min=1,
-        help="KD-tree query workers.",
+        int(os.environ.get("SLURM_CPUS_PER_TASK", "1")), min=1, help="KD-tree query workers."
     ),
     overwrite: bool = typer.Option(
-        False,
-        help="Rebuild selected caches after geometry or upstream inputs change.",
+        False, help="Rebuild caches even if they match the current settings."
     ),
     list_only: bool = typer.Option(
-        False,
-        help="Print cases or selected input/output paths without loading snapshots.",
+        False, help="Print cases or input/output paths without loading snapshots."
     ),
 ) -> None:
     """Build small shock-geometry and physical-field caches from raw snapshots."""
-    global RESULT_ROOT, ANALYSIS_ROOT, PER_CELL_ROOT
-    global SELF_ROOT, GEOMETRY_ROOT, MACH_ROOT, NOZZLE_ZOOM_ROOT, SELF_MACH_MAX_ROOT
-    RESULT_ROOT = result_root
-    ANALYSIS_ROOT = output_root or result_root / "analysis/zoom-shocks"
-    PER_CELL_ROOT = per_cell_root or result_root / "analysis/per-cell"
-    SELF_ROOT = ANALYSIS_ROOT / "self-intersection"
-    GEOMETRY_ROOT = ANALYSIS_ROOT / "cells"
-    MACH_ROOT = ANALYSIS_ROOT / "mach-slices"
-    NOZZLE_ZOOM_ROOT = ANALYSIS_ROOT / "nozzle-orbit-zoom50"
-    SELF_MACH_MAX_ROOT = ANALYSIS_ROOT / "self-mach-max"
     if list_only and task_index is None and run is None and snapnum is None:
         for index, (case_run, number) in enumerate(CASES):
             print(f"[{index}] {case_run} snap {number}")
         return
-    if task_index is not None:
-        if run is not None or snapnum is not None:
-            raise typer.BadParameter("Choose --task-index or --run/--snapnum.")
-        run, snapnum = CASES[task_index]
-    elif run not in TDE_PARAMETERS or snapnum is None:
-        raise typer.BadParameter(
-            "Choose --task-index, or --run {1e4,1e5,1e6} --snapnum N."
-        )
+    run, snapnum = choose_case(task_index, run, snapnum)
+    output_root = output_root or os.path.join(result_root, "analysis/zoom-shocks")
+    per_cell_root = per_cell_root or os.path.join(result_root, "analysis/per-cell")
+
     if (self_center is None) != (self_half_width is None):
         raise typer.BadParameter("Supply both --self-center and --self-half-width.")
     if self_center is not None:
+        present = SELF_WINDOWS.get((run, snapnum), {}).get("self_intersection_present", np.nan)
         SELF_WINDOWS[(run, snapnum)] = {
             "center": self_center,
             "half_width": self_half_width,
-            "self_intersection_present": SELF_WINDOWS.get((run, snapnum), {}).get(
-                "self_intersection_present", np.nan
-            ),
+            "self_intersection_present": present,
         }
-    products = product or ["geometry", "self", "nozzle", "self-mach-max", "mach"]
-    unknown = set(products) - {"geometry", "self", "nozzle", "self-mach-max", "mach"}
-    if unknown:
+    if unknown := set(product or ()) - set(PRODUCTS):
         raise typer.BadParameter(f"Unknown products: {', '.join(sorted(unknown))}")
     if product and "nozzle" in product:
         NOZZLE_CASES.add((run, snapnum))
-    if (
-        product
-        and any(name in product for name in ("self", "self-mach-max"))
-        and (run, snapnum) not in SELF_WINDOWS
-    ):
+    if missing := [name for name in product or () if not applicable(name, run, snapnum)]:
         raise typer.BadParameter(
-            "No self-intersection box. Supply --self-center and --self-half-width."
+            f"No configured geometry for {', '.join(missing)}; supply a box or --product nozzle."
         )
-    has_self = (run, snapnum) in SELF_WINDOWS
-    has_nozzle = (run, snapnum) in NOZZLE_CASES
-    if product and "mach" in product and not (has_self or has_nozzle):
-        raise typer.BadParameter(
-            "Mach slices need a self-intersection box or --product nozzle."
-        )
-    if not (has_self or has_nozzle):
-        products = [name for name in products if name != "mach"]
-    destinations = {
-        "geometry": geometry_path(run, snapnum),
-        "self": self_path(run, snapnum),
-        "nozzle": nozzle_zoom_path(run, snapnum),
-        "self-mach-max": self_mach_max_path(run, snapnum),
-        "mach": mach_path(run, snapnum),
+
+    products = [name for name in product or PRODUCTS if applicable(name, run, snapnum)]
+    paths = {
+        name: os.path.join(output_root, CACHE_NAMES[name].format(run=run, snapnum=snapnum))
+        for name in products
     }
-    result_path = RESULT_ROOT / run / f"shockfinder_snap_{snapnum:04d}.npz"
+    result_path = os.path.join(result_root, run, f"shockfinder_snap_{snapnum:04d}.npz")
+    per_cell_path = os.path.join(per_cell_root, f"{run}_shock_dissipation_snap_{snapnum:04d}.npz")
     print(f"Shock-finder input: {result_path}")
-    if "geometry" in products:
-        cell_path = PER_CELL_ROOT / f"{run}_shock_dissipation_snap_{snapnum:04d}.npz"
-        print(f"Per-cell input: {cell_path}")
-    for name in products:
-        applicable = not (
-            (name in ("self", "self-mach-max") and (run, snapnum) not in SELF_WINDOWS)
-            or (name == "nozzle" and (run, snapnum) not in NOZZLE_CASES)
-        )
-        print(
-            f"{name}: {destinations[name]}"
-            if applicable
-            else f"{name}: skipped (no configured geometry)"
-        )
+    for name, path in paths.items():
+        print(f"{name}: {path}")
     if list_only:
         return
-    with np.load(result_path) as result:
-        snap_path = Path(str(result["snap_path"].item()))
-        print(f"Snapshot input: {snap_path}", flush=True)
-        snap = richio.load(str(snap_path))
-        x, y, z = plotting_coordinates(snap, run, snap_path)
-        if "geometry" in products:
-            build_geometry(snap, run, snapnum, result, x, y, z, overwrite)
-        if "self" in products:
-            build_self_slice(snap, run, snapnum, x, y, z, workers, overwrite)
-        if "nozzle" in products:
-            build_nozzle_zoom(snap, run, snapnum, result, x, y, z, workers, overwrite)
-        if "self-mach-max" in products:
-            build_self_mach_max(snap, run, snapnum, result, x, y, z, overwrite)
-        if "mach" in products:
-            build_mach_slices(snap, run, snapnum, result, x, y, z, workers, overwrite)
+
+    result = load_npz(result_path)
+    snap_path = str(result["snap_path"])
+    print(f"Snapshot input: {snap_path}", flush=True)
+    snap = richio.load(snap_path)
+    case = Case(
+        run,
+        snapnum,
+        snap,
+        result,
+        *bh_frame_positions(snap, run, snap_path),
+        per_cell_path,
+        workers,
+    )
+    for name, path in paths.items():
+        if not overwrite and is_current(name, path, run, snapnum):
+            print(f"Exists {path}", flush=True)
+            continue
+        save_npz_atomic(path, **BUILDERS[name](case))
+        print(f"Saved {path}", flush=True)
 
 
 if __name__ == "__main__":
