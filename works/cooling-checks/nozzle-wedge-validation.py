@@ -134,17 +134,17 @@ Loading examples
 ----------------
 Load a direction and compare captured dissipation between grids::
 
-    from pathlib import Path
+    import os
     import csv
     import numpy as np
 
-    root = Path("data/processed/CoolingChecks/nozzle-timescale-series")
-    root = root / "stage1-wedge-selection/1e4"
-    with np.load(root / "directions/direction_snap_0108.npz") as data:
+    root = "data/processed/CoolingChecks/nozzle-timescale-series"
+    root = os.path.join(root, "stage1-wedge-selection/1e4")
+    with np.load(os.path.join(root, "directions/direction_snap_0108.npz")) as data:
         xyz = np.array([data[f"direction_peak_{a}_rp_dirmin_0p6"].item()
                         for a in "xyz"])
     print("Direction [degrees]:", np.degrees(np.arctan2(xyz[1], xyz[0])))
-    with (root / "wedge-metrics.csv").open(newline="") as stream:
+    with open(os.path.join(root, "wedge-metrics.csv"), newline="") as stream:
         rows = list(csv.DictReader(stream))
     selected = [row for row in rows if int(row["snapnum"]) == 108
                 and float(row["direction_radius_min_rp"]) == 0.6]
@@ -155,13 +155,18 @@ Load a direction and compare captured dissipation between grids::
 from __future__ import annotations
 
 import csv
+import glob
 import math
 import os
 import re
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache" / "matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache",
+        "matplotlib",
+    ),
 )
 
 os.environ.setdefault("MPLBACKEND", "Agg")
@@ -177,11 +182,11 @@ from richio.plots import scalar_map
 
 import richio
 
-INPUT_ROOT = Path(
+INPUT_ROOT = (
     "/home/hey4/rich_tde/data/processed/CoolingChecks/"
     "nozzle-timescale-series/stage1-selection"
 )
-OUTPUT_ROOT = Path(
+OUTPUT_ROOT = (
     "/home/hey4/rich_tde/data/processed/CoolingChecks/"
     "nozzle-timescale-series/stage1-wedge-selection"
 )
@@ -202,10 +207,10 @@ def positive_log10(values):
     return np.log10(np.where(np.isfinite(values) & (values > 0), values, np.nan))
 
 
-def needs_reference_frame(run: str, path: Path) -> bool:
+def needs_reference_frame(run: str, path: str) -> bool:
     if run == "1e6":
-        return path.parent.name == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", path.name) is not None
+        return os.path.basename(os.path.dirname(path)) == "TEMPTDE"
+    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
 
 
 def scalar_time(snapshot):
@@ -214,8 +219,8 @@ def scalar_time(snapshot):
     return u.unyt_quantity(value, "code_time", registry=time.units.registry)
 
 
-def direction_cache_complete(path: Path) -> bool:
-    if not path.is_file() or path.stat().st_size == 0:
+def direction_cache_complete(path: str) -> bool:
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
         return False
     try:
         with np.load(path) as data:
@@ -229,11 +234,11 @@ def direction_cache_complete(path: Path) -> bool:
         return False
 
 
-def build_direction_cache(column_cache: Path, destination: Path, run: str) -> None:
+def build_direction_cache(column_cache: str, destination: str, run: str) -> None:
     """Find native-cell dissipation maxima inside both direction shells."""
 
     with np.load(column_cache) as data:
-        snapshot_path = Path(str(data["snapshot_path"]))
+        snapshot_path = os.path.normpath(str(data["snapshot_path"]))
         snapnum = int(data["snapnum"])
     snapshot = richio.load(str(snapshot_path))
     x, y, z = snapshot.X, snapshot.Y, snapshot.Z
@@ -279,14 +284,14 @@ def build_direction_cache(column_cache: Path, destination: Path, run: str) -> No
             float(snapshot.dissipation[peak_index].in_cgs().value)
         )
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(".tmp")
-    with temporary.open("wb") as stream:
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    temporary = os.path.splitext(destination)[0] + ".tmp"
+    with open(temporary, "wb") as stream:
         np.savez_compressed(stream, **arrays)
-    temporary.replace(destination)
+    os.replace(temporary, destination)
 
 
-def load_direction(path: Path, radius_min_rp: float) -> dict[str, float]:
+def load_direction(path: str, radius_min_rp: float) -> dict[str, float]:
     label = str(radius_min_rp).replace(".", "p")
     with np.load(path) as data:
         x = float(data[f"direction_peak_x_rp_dirmin_{label}"])
@@ -296,18 +301,18 @@ def load_direction(path: Path, radius_min_rp: float) -> dict[str, float]:
     return {"x": x, "y": y, "z": z, "dissipation_cgs": dissipation}
 
 
-def cache_paths(input_root: Path, run: str) -> dict[tuple[int, int], Path]:
+def cache_paths(input_root: str, run: str) -> dict[tuple[int, int], str]:
     output = {}
     pattern = re.compile(r"selection_snap_(\d+)_(\d+)\.npz$")
-    for path in sorted((input_root / run / "columns").glob("*.npz")):
-        match = pattern.fullmatch(path.name)
+    for path in sorted(glob.glob(os.path.join(input_root, run, "columns", "*.npz"))):
+        match = pattern.fullmatch(os.path.basename(path))
         if match:
             output[(int(match.group(1)), int(match.group(2)))] = path
     return output
 
 
 def wedge_metrics(
-    cache_path: Path,
+    cache_path: str,
     direction_radius_min_rp: float,
     direction_peak: dict[str, float],
 ) -> tuple[dict, dict[str, np.ndarray]]:
@@ -413,7 +418,7 @@ def wedge_metrics(
     return row, arrays
 
 
-def render(row: dict, arrays: dict, destination: Path) -> None:
+def render(row: dict, arrays: dict, destination: str) -> None:
     x_rp = arrays["x_rp"]
     y_rp = arrays["y_rp"]
     dissipation = arrays["dissipation"]
@@ -532,21 +537,21 @@ def render(row: dict, arrays: dict, destination: Path) -> None:
         ax.set_xlabel(r"$x/r_p$")
         ax.set_ylabel(r"$y/r_p$")
     fig.tight_layout()
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
     fig.savefig(destination, dpi=180)
     plt.close(fig)
 
 
-def write_csv(path: Path, rows: list[dict]) -> None:
+def write_csv(path: str, rows: list[dict]) -> None:
     if not rows:
         raise ValueError("No rows to save")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    with temporary.open("w", newline="", encoding="utf-8") as stream:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    temporary = os.path.splitext(path)[0] + ".tmp"
+    with open(temporary, "w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-    temporary.replace(path)
+    os.replace(temporary, path)
 
 
 def convergence_rows(rows: list[dict], resolutions=RESOLUTIONS) -> list[dict]:
@@ -602,10 +607,10 @@ def convergence_rows(rows: list[dict], resolutions=RESOLUTIONS) -> list[dict]:
 
 def main(
     mode: int = typer.Option(..., min=1, max=3, help="1: 1e4, 2: 1e5, 3: 1e6"),
-    input_root: Path = typer.Option(  # noqa: B008 - Typer declares options in defaults.
+    input_root: str = typer.Option(  # noqa: B008 - Typer declares options in defaults.
         INPUT_ROOT, help="Stage-1 column-cache root"
     ),
-    output_root: Path = typer.Option(  # noqa: B008 - Typer declares options in defaults.
+    output_root: str = typer.Option(  # noqa: B008 - Typer declares options in defaults.
         OUTPUT_ROOT, help="Wedge-validation output root"
     ),
     overwrite: bool = typer.Option(False, help="Rebuild direction caches and figures"),
@@ -621,6 +626,8 @@ def main(
 ) -> None:
     """Compare native-peak wedge selections on existing column caches."""
     run = RUN_BY_MODE[mode]
+    input_root = os.path.normpath(input_root)
+    output_root = os.path.normpath(output_root)
     resolutions = tuple(sorted(set(resolution)))
     paths = cache_paths(input_root, run)
     snapnums = sorted(set(snapshot_number or [snapnum for snapnum, _ in paths]))
@@ -639,10 +646,12 @@ def main(
             )
         snapnums = [snapnums[snapshot_index]]
 
-    run_root = output_root / run
+    run_root = os.path.join(output_root, run)
     rows = []
     for snapnum in snapnums:
-        direction_path = run_root / "directions" / f"direction_snap_{snapnum:04d}.npz"
+        direction_path = os.path.join(
+            run_root, "directions", f"direction_snap_{snapnum:04d}.npz"
+        )
         if overwrite or not direction_cache_complete(direction_path):
             logger.info("Finding native shell maxima for {} snapshot {}", run, snapnum)
             build_direction_cache(paths[(snapnum, resolutions[0])], direction_path, run)
@@ -656,25 +665,23 @@ def main(
                 )
                 rows.append(row)
                 radius_label = str(direction_radius_min_rp).replace(".", "p")
-                figure_path = (
-                    run_root
-                    / "figures"
-                    / (
-                        f"wedge_snap_{snapnum:04d}_{resolution}_dirmin_{radius_label}.png"
-                    )
+                figure_path = os.path.join(
+                    run_root,
+                    "figures",
+                    f"wedge_snap_{snapnum:04d}_{resolution}_dirmin_{radius_label}.png",
                 )
                 if (
                     overwrite
-                    or not figure_path.is_file()
-                    or figure_path.stat().st_size == 0
+                    or not os.path.isfile(figure_path)
+                    or os.path.getsize(figure_path) == 0
                 ):
                     logger.info("Rendering {}", figure_path)
                     render(row, arrays, figure_path)
 
-    write_csv(run_root / "wedge-metrics.csv", rows)
+    write_csv(os.path.join(run_root, "wedge-metrics.csv"), rows)
     if len(resolutions) >= 2:
         write_csv(
-            run_root / "wedge-convergence.csv", convergence_rows(rows, resolutions)
+            os.path.join(run_root, "wedge-convergence.csv"), convergence_rows(rows, resolutions)
         )
     logger.info("Wedge validation complete for {}: {} metric rows", run, len(rows))
 

@@ -59,26 +59,31 @@ Loading examples
 ----------------
 Inspect an encoded frame and its PNG without loading the full movie::
 
+    import os
+
     import imageio.v2 as imageio
     import numpy as np
     from PIL import Image
-    from pathlib import Path
 
-    root = Path("data/processed/Movies")
-    with imageio.get_reader(root / "evo_disk_proj.mp4") as movie:
+    root = "data/processed/Movies"
+    with imageio.get_reader(os.path.join(root, "evo_disk_proj.mp4")) as movie:
         rgb = movie.get_data(0)  # (H, W, 3), uint8
         print(movie.get_meta_data(), rgb.shape)
-    with Image.open(root / "evo_disk_proj_frames/frame_00000.png") as image:
+    path = os.path.join(root, "evo_disk_proj_frames/frame_00000.png")
+    with Image.open(path) as image:
         rgba = np.array(image.convert("RGBA"))  # (H, W, 4), uint8
 """
 
 import argparse
 import os
 import sys
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 os.environ.setdefault("MPLBACKEND", "Agg")
 
@@ -140,23 +145,23 @@ def _spin_indices(snaps, spin_tfb):
 
 def find_snapshots(run_dir, start, end):
     """Find inclusive snapshot numbers, preferring HDF5 over extracted NPY data."""
-    run_dir = Path(run_dir)
+    run_dir = os.path.normpath(run_dir)
     snaps = []
     for index in range(start, end + 1):
-        folder = run_dir / f"snap_{index}"
+        folder = os.path.join(run_dir, f"snap_{index}")
         candidates = [
-            folder / f"snap_{index}.h5",
-            folder / f"snap_full_{index}.h5",
-            run_dir / f"snap_{index}.h5",
-            run_dir / f"snap_full_{index}.h5",
+            os.path.join(folder, f"snap_{index}.h5"),
+            os.path.join(folder, f"snap_full_{index}.h5"),
+            os.path.join(run_dir, f"snap_{index}.h5"),
+            os.path.join(run_dir, f"snap_full_{index}.h5"),
         ]
         path = next(
-            (candidate for candidate in candidates if candidate.is_file()), None
+            (candidate for candidate in candidates if os.path.isfile(candidate)), None
         )
         if path is not None:
-            snaps.append(str(path))
-        elif (folder / f"Den_{index}.npy").is_file():
-            snaps.append(str(folder))
+            snaps.append(path)
+        elif os.path.isfile(os.path.join(folder, f"Den_{index}.npy")):
+            snaps.append(folder)
     return snaps
 
 
@@ -302,7 +307,7 @@ def main(argv=None):
     )
     args = p.parse_args(argv)
 
-    if Path(args.out).exists() and not args.overwrite:
+    if os.path.exists(args.out) and not args.overwrite:
         print(f"Skipping existing {args.out}; use --overwrite to replace.", flush=True)
         return 0
 
@@ -448,7 +453,7 @@ def main(argv=None):
         n_jobs=args.n_jobs,
         filename=args.out,
         frames_dir=args.frames_dir
-        or str(Path(args.out).with_name(Path(args.out).stem + "_frames")),
+        or os.path.splitext(os.path.normpath(args.out))[0] + "_frames",
         keep_frames=args.keep_frames,
     )
     print(f"[render_evolution] done -> {out['filename']}", flush=True)

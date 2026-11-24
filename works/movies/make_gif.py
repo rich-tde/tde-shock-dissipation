@@ -57,15 +57,16 @@ Loading examples
 ----------------
 Inspect a PNG and count animation frames for the first command above::
 
+    import os
+
     import numpy as np
-    from pathlib import Path
     from PIL import Image
 
-    root = Path("data/processed/Movies/Gifs")
+    root = "data/processed/Movies/Gifs"
     stem = "density_proj_yz"
-    with Image.open(root / stem / f"{stem}_snap_0021.png") as image:
+    with Image.open(os.path.join(root, stem, f"{stem}_snap_0021.png")) as image:
         rgba = np.array(image.convert("RGBA"))  # (H, W, 4), uint8
-    with Image.open(root / f"{stem}.gif") as movie:
+    with Image.open(os.path.join(root, f"{stem}.gif")) as movie:
         print(movie.n_frames, movie.info.get("duration"))  # count, milliseconds
         movie.seek(0)
         first_rgb = np.array(movie.convert("RGB"))  # (H, W, 3), uint8
@@ -75,10 +76,13 @@ import argparse
 import logging
 import math
 import os
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 os.environ.setdefault("MPLBACKEND", "Agg")
 
@@ -170,8 +174,13 @@ def main(argv=None):
     )
     parser.add_argument(
         "--out",
-        type=Path,
-        default=Path(__file__).resolve().parents[2] / "data/processed/Movies/Gifs",
+        type=os.path.normpath,
+        default=os.path.join(
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+            ),
+            "data/processed/Movies/Gifs",
+        ),
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
@@ -195,7 +204,9 @@ def main(argv=None):
         for path in snapshots:
             print(path)
         for field in fields:
-            print(f"Output: {args.out / f'{field}_{kind}_{args.plane}.gif'}")
+            print(
+                f"Output: {os.path.join(args.out, f'{field}_{kind}_{args.plane}.gif')}"
+            )
         return 0
 
     radius = args.r_star * (args.m_bh / args.m_star) ** (2 / 3)
@@ -204,8 +215,8 @@ def main(argv=None):
     reference = None
     for field in fields:
         name = f"{field}_{kind}_{args.plane}"
-        gif = args.out / f"{name}.gif"
-        if gif.exists() and not args.overwrite:
+        gif = os.path.join(args.out, f"{name}.gif")
+        if os.path.exists(gif) and not args.overwrite:
             LOG.info("Skipping existing %s; use --overwrite to replace", gif)
             continue
         if reference is None:
@@ -227,8 +238,8 @@ def main(argv=None):
         for path in snapshots:
             snapshot = richio.load(path)
             number = snapshot.snapnum
-            outpath = args.out / name / f"{name}_snap_{number:04d}.png"
-            if not outpath.exists() or args.overwrite:
+            outpath = os.path.join(args.out, name, f"{name}_snap_{number:04d}.png")
+            if not os.path.exists(outpath) or args.overwrite:
                 data, xspace, yspace = sample_map(snapshot, field, args, box)
                 fig, ax = plt.subplots(figsize=(6, 5))
                 richio.plots.scalar_map(
@@ -243,7 +254,7 @@ def main(argv=None):
                 )
                 ax.set_xlabel(f"{args.plane[0]} [{xspace.units}]")
                 ax.set_ylabel(f"{args.plane[1]} [{yspace.units}]")
-                outpath.parent.mkdir(parents=True, exist_ok=True)
+                os.makedirs(os.path.dirname(outpath), exist_ok=True)
                 fig.savefig(outpath, dpi=150, bbox_inches="tight")
                 plt.close(fig)
                 LOG.info("Saved %s (input %s)", outpath, path)

@@ -87,10 +87,13 @@ import gc
 import json
 import os
 import sys
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 os.environ.setdefault("MPLBACKEND", "Agg")
 

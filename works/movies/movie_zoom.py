@@ -61,10 +61,10 @@ Loading examples
 ----------------
 Use the helper from a notebook or Python session at the repository root::
 
+    import os
     import sys
-    from pathlib import Path
 
-    sys.path.insert(0, str(Path("works/movies").resolve()))
+    sys.path.insert(0, os.path.realpath("works/movies"))
     import movie_zoom
 
     box = [-35, -35, -1400, 35, 35, 1400]

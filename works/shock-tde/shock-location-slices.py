@@ -105,13 +105,13 @@ Loading examples
 ----------------
 Load a current-schema cache and plot its unfiltered XY surface-cell counts::
 
-    from pathlib import Path
+    import os
     import dev
     import matplotlib.pyplot as plt
     import numpy as np
 
-    root = Path("data/processed/ShockFinderEdissSelection/analysis/shock-locations")
-    with np.load(root / "1e4/grids/shock_locations_snap_0151.npz") as data:
+    root = "data/processed/ShockFinderEdissSelection/analysis/shock-locations"
+    with np.load(os.path.join(root, "1e4/grids/shock_locations_snap_0151.npz")) as data:
         x = data["xy_shock_x_edges"]
         y = data["xy_shock_y_edges"]
         count = data["xy_shock_count"]
@@ -127,16 +127,20 @@ Load a current-schema cache and plot its unfiltered XY surface-cell counts::
 
 from __future__ import annotations
 
+import glob
 import math
 import os
 import re
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
@@ -154,9 +158,9 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 import richio
 
-RESULT_ROOT = Path("/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection")
-OUTPUT_ROOT = RESULT_ROOT / "analysis" / "shock-locations"
-PER_CELL_ROOT = RESULT_ROOT / "analysis" / "per-cell"
+RESULT_ROOT = "/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection"
+OUTPUT_ROOT = os.path.join(RESULT_ROOT, "analysis", "shock-locations")
+PER_CELL_ROOT = os.path.join(RESULT_ROOT, "analysis", "per-cell")
 DEFAULT_SHOCK_MACH_MIN = 1.8
 
 
@@ -179,8 +183,11 @@ class RunConfig:
 RUNS = {run: RunConfig(run, *TDE_PARAMETERS[run]) for run in ("1e4", "1e5", "1e6")}
 
 
-def selected_results() -> list[Path]:
-    return sorted(RESULT_ROOT.glob("1e*/shockfinder_snap_*.npz"))
+def selected_results() -> list[str]:
+    return sorted(
+        glob.glob(os.path.join(RESULT_ROOT, "1e*/shockfinder_snap_*.npz")),
+        key=lambda path: path.split(os.sep),
+    )
 
 
 # Keep these synchronized with the three-mass conference movies in
@@ -192,17 +199,19 @@ MOVIE_WINDOW_OVERRIDES = {
 }
 
 
-def needs_reference_frame(run: str, path: Path) -> bool:
+def needs_reference_frame(run: str, path: str) -> bool:
     if run == "1e6":
-        return path.parent.name == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", path.name) is not None
+        return os.path.basename(os.path.dirname(path)) == "TEMPTDE"
+    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
 
 
-def cache_path(run: str, snapnum: int) -> Path:
-    return OUTPUT_ROOT / run / "grids" / f"shock_locations_snap_{snapnum:04d}.npz"
+def cache_path(run: str, snapnum: int) -> str:
+    return os.path.join(
+        OUTPUT_ROOT, run, "grids", f"shock_locations_snap_{snapnum:04d}.npz"
+    )
 
 
-def cache_complete(path: Path) -> bool:
+def cache_complete(path: str) -> bool:
     required = {
         f"{plane}_{field}"
         for plane in ("xy", "yz")
@@ -329,11 +338,11 @@ def projected_view(
     }
 
 
-def build_cache(result_path: Path, destination: Path, workers: int) -> None:
+def build_cache(result_path: str, destination: str, workers: int) -> None:
     with np.load(result_path) as result:
         run = str(result["run"].item())
         snapnum = int(result["snapnum"])
-        snap_path = Path(str(result["snap_path"].item()))
+        snap_path = os.path.normpath(str(result["snap_path"].item()))
         time_tfb = float(result["time_tfb"])
         is_last = bool(result["is_last"])
         surface_indices = np.asarray(result["surf_idx"], dtype=np.intp)
@@ -387,19 +396,20 @@ def build_cache(result_path: Path, destination: Path, workers: int) -> None:
         for field, values in view.items():
             arrays[f"{plane}_{field}"] = values
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
     with tempfile.NamedTemporaryFile(
-        dir=destination.parent,
-        prefix=f".{destination.stem}.",
+        dir=os.path.dirname(destination),
+        prefix=f".{os.path.splitext(os.path.basename(destination))[0]}.",
         suffix=".npz",
         delete=False,
     ) as temporary:
-        temporary_path = Path(temporary.name)
+        temporary_path = temporary.name
     try:
         np.savez_compressed(temporary_path, **arrays)
         os.replace(temporary_path, destination)
     finally:
-        temporary_path.unlink(missing_ok=True)
+        if os.path.exists(temporary_path):
+            os.remove(temporary_path)
 
 
 def top_decades(values: np.ndarray, decades: float = 6) -> tuple[float, float]:
@@ -417,8 +427,10 @@ def filtered_shock_count(
     run = str(cache_data["run"].item())
     snapnum = int(cache_data["snapnum"])
     r_p_rsun = float(cache_data["r_p_rsun"])
-    per_cell_path = PER_CELL_ROOT / f"{run}_shock_dissipation_snap_{snapnum:04d}.npz"
-    if not per_cell_path.is_file():
+    per_cell_path = os.path.join(
+        PER_CELL_ROOT, f"{run}_shock_dissipation_snap_{snapnum:04d}.npz"
+    )
+    if not os.path.isfile(per_cell_path):
         raise FileNotFoundError(
             f"Missing per-cell shock product needed for filtering: {per_cell_path}"
         )
@@ -429,10 +441,12 @@ def filtered_shock_count(
         x = np.asarray(cells["x_Rsun"], dtype="float64")
         y = np.asarray(cells["y_Rsun"], dtype="float64")
         z = np.asarray(cells["z_Rsun"], dtype="float64")
-        snap_path = Path(str(cells["snap_path"].item()))
+        snap_path = os.path.normpath(str(cells["snap_path"].item()))
 
     if needs_reference_frame(run, snap_path):
-        result_path = RESULT_ROOT / run / f"shockfinder_snap_{snapnum:04d}.npz"
+        result_path = os.path.join(
+            RESULT_ROOT, run, f"shockfinder_snap_{snapnum:04d}.npz"
+        )
         with np.load(result_path) as result:
             time = float(result["time_code"]) * richio.units.tscale
         config = RUNS[run]
@@ -489,9 +503,9 @@ def compact_colorbar(
 
 
 def render_plane(
-    cache: Path,
+    cache: str,
     plane: str,
-    destination: Path,
+    destination: str,
     dpi: int,
     shock_mach_min: float,
     shock_power_min: float,
@@ -599,7 +613,7 @@ def render_plane(
 
     axes[0].set_ylabel(rf"${axis_names[1]}/r_p$", labelpad=2)
     fig.subplots_adjust(left=0.055, right=0.995, bottom=0.19, top=0.985)
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
     fig.savefig(destination, dpi=dpi, facecolor="white")
     plt.close(fig)
 
@@ -610,17 +624,17 @@ def main(
         min=0,
         help="Zero-based index in sorted result files; use --list-only to inspect.",
     ),
-    result: Path | None = typer.Option(
+    result: str | None = typer.Option(
         None, help="Single shockfinder_snap_NNNN.npz, instead of --task-index."
     ),
-    result_root: Path = typer.Option(
+    result_root: str = typer.Option(
         RESULT_ROOT,
         help="Shock-finder input root; contains RUN/shockfinder_snap_NNNN.npz.",
     ),
-    output_root: Path | None = typer.Option(
+    output_root: str | None = typer.Option(
         None, help="Output root; defaults to RESULT_ROOT/analysis/shock-locations."
     ),
-    per_cell_root: Path | None = typer.Option(
+    per_cell_root: str | None = typer.Option(
         None, help="Per-cell input root; defaults to RESULT_ROOT/analysis/per-cell."
     ),
     workers: int = typer.Option(
@@ -643,10 +657,23 @@ def main(
 ) -> None:
     """Plot XY/YZ gas projections and filtered shock-surface cell counts."""
     global RESULT_ROOT, OUTPUT_ROOT, PER_CELL_ROOT
-    result_root = result.parent.parent if result is not None else result_root
+    result = os.path.normpath(result) if result is not None else None
+    result_root = (
+        os.path.dirname(os.path.dirname(result))
+        if result is not None
+        else os.path.normpath(result_root)
+    )
     RESULT_ROOT = result_root
-    OUTPUT_ROOT = output_root or result_root / "analysis/shock-locations"
-    PER_CELL_ROOT = per_cell_root or result_root / "analysis/per-cell"
+    OUTPUT_ROOT = (
+        os.path.normpath(output_root)
+        if output_root is not None
+        else os.path.join(result_root, "analysis/shock-locations")
+    )
+    PER_CELL_ROOT = (
+        os.path.normpath(per_cell_root)
+        if per_cell_root is not None
+        else os.path.join(result_root, "analysis/per-cell")
+    )
     if result is not None and task_index is not None:
         raise typer.BadParameter("Choose --result or --task-index, not both.")
     results = [result] if result is not None else selected_results()
@@ -683,12 +710,12 @@ def main(
         print(f"Using cached histograms {cache}")
 
     for plane in ("xy", "yz"):
-        destination = (
-            OUTPUT_ROOT / run / plane / f"shock_locations_snap_{snapnum:04d}.png"
+        destination = os.path.join(
+            OUTPUT_ROOT, run, plane, f"shock_locations_snap_{snapnum:04d}.png"
         )
         if (
-            destination.is_file()
-            and destination.stat().st_size > 0
+            os.path.isfile(destination)
+            and os.path.getsize(destination) > 0
             and not (overwrite or rerender or rebuilt)
         ):
             print(f"Exists {destination}")

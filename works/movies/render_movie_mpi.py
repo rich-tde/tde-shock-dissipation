@@ -55,26 +55,30 @@ Loading examples
 ----------------
 Inspect one movie frame and the retained source PNG::
 
+    import os
+
     import imageio.v2 as imageio
     import numpy as np
-    from pathlib import Path
     from PIL import Image
 
-    root = Path("data/processed/Movies")
-    with imageio.get_reader(root / "spin.mp4") as movie:
+    root = "data/processed/Movies"
+    with imageio.get_reader(os.path.join(root, "spin.mp4")) as movie:
         rgb = movie.get_data(0)  # (H, W, 3), uint8
         print(movie.get_meta_data(), rgb.shape)
-    with Image.open(root / "spin_frames/frame_00000.png") as image:
+    with Image.open(os.path.join(root, "spin_frames/frame_00000.png")) as image:
         rgba = np.array(image.convert("RGBA"))  # (H, W, 4), uint8
 """
 
 import argparse
 import os
 import sys
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 os.environ.setdefault("MPLBACKEND", "Agg")
 
@@ -114,7 +118,7 @@ def main(argv=None):
     )
     args = p.parse_args(argv)
 
-    if Path(args.out).exists() and not args.overwrite:
+    if os.path.exists(args.out) and not args.overwrite:
         print(f"Skipping existing {args.out}; use --overwrite to replace.", flush=True)
         return 0
 
@@ -128,11 +132,9 @@ def main(argv=None):
     rank = comm.rank if comm is not None else 0
     size = comm.size if comm is not None else 1
 
-    output_path = Path(args.out).resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    frames_dir = args.frames_dir or str(
-        output_path.with_name(output_path.stem + "_frames")
-    )
+    output_path = os.path.realpath(args.out)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    frames_dir = args.frames_dir or os.path.splitext(output_path)[0] + "_frames"
     if rank == 0:
         os.makedirs(frames_dir, exist_ok=True)
     if comm is not None:

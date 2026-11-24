@@ -68,16 +68,17 @@ Loading examples
 ----------------
 Inspect the density movie and retained first PNG::
 
+    import os
+
     import imageio.v2 as imageio
     import numpy as np
-    from pathlib import Path
     from PIL import Image
 
-    root = Path("data/processed/Movies/angles")
-    with imageio.get_reader(root / "g3_side_density.mp4") as movie:
+    root = "data/processed/Movies/angles"
+    with imageio.get_reader(os.path.join(root, "g3_side_density.mp4")) as movie:
         rgb = movie.get_data(0)  # (H, W, 3), uint8 display colours
         print(movie.get_meta_data(), rgb.shape)
-    path = root / "g3_side_frames/density/frame_00000.png"
+    path = os.path.join(root, "g3_side_frames/density/frame_00000.png")
     with Image.open(path) as image:
         rgba = np.array(image.convert("RGBA"))  # (H, W, 4), uint8
 """
@@ -86,10 +87,13 @@ import argparse
 import functools
 import os
 import sys
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 os.environ.setdefault("MPLBACKEND", "Agg")
 
@@ -642,7 +646,9 @@ def main(argv=None):
         )
 
     os.makedirs(args.outdir, exist_ok=True)
-    frames_root = args.frames_root or str(Path(args.outdir) / f"{args.tag}_frames")
+    frames_root = args.frames_root or os.path.join(
+        os.path.normpath(args.outdir), f"{args.tag}_frames"
+    )
 
     views = [
         _make_view(

@@ -57,26 +57,30 @@ Loading examples
 ----------------
 Inspect the movie and one retained six-panel frame::
 
+    import os
+
     import imageio.v2 as imageio
     import numpy as np
-    from pathlib import Path
     from PIL import Image
 
-    root = Path("data/processed/Movies")
-    with imageio.get_reader(root / "wind_proj.mp4") as movie:
+    root = "data/processed/Movies"
+    with imageio.get_reader(os.path.join(root, "wind_proj.mp4")) as movie:
         rgb = movie.get_data(0)  # (H, W, 3), uint8
         print(movie.get_meta_data(), rgb.shape)
-    with Image.open(root / "wind_proj_frames/frame_00000.png") as image:
+    with Image.open(os.path.join(root, "wind_proj_frames/frame_00000.png")) as image:
         rgba = np.array(image.convert("RGBA"))  # normally (880, 1870, 4)
 """
 
 import argparse
 import os
 import sys
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 os.environ.setdefault("MPLBACKEND", "Agg")
 
@@ -369,7 +373,7 @@ def main(argv=None):
     )
     args = p.parse_args(argv)
 
-    if Path(args.out).exists() and not args.overwrite:
+    if os.path.exists(args.out) and not args.overwrite:
         print(f"Skipping existing {args.out}; use --overwrite to replace.", flush=True)
         return 0
 
@@ -417,10 +421,8 @@ def main(argv=None):
     outdir = os.path.dirname(os.path.abspath(args.out))
     if outdir:
         os.makedirs(outdir, exist_ok=True)
-    output_path = Path(args.out).resolve()
-    frames_dir = args.frames_dir or str(
-        output_path.with_name(output_path.stem + "_frames")
-    )
+    output_path = os.path.realpath(args.out)
+    frames_dir = args.frames_dir or os.path.splitext(output_path)[0] + "_frames"
     os.makedirs(frames_dir, exist_ok=True)
 
     ref_path = snaps[args.ref_index]

@@ -66,11 +66,11 @@ Inspect the default PNG after running the default command::
 
 Load the underlying numerical density grid independently of the figure::
 
-    from pathlib import Path
+    import os
     import numpy as np
 
-    root = Path("data/processed/NozzleZoomSlices/1e4/grids")
-    with np.load(root / "nozzle_zoom_snap_0077_768.npz") as data:
+    root = "data/processed/NozzleZoomSlices/1e4/grids"
+    with np.load(os.path.join(root, "nozzle_zoom_snap_0077_768.npz")) as data:
         density_cgs = 10.0 ** data["density"]
         time_tfb = data["time_tfb"].item()
     print(time_tfb, np.nanmax(density_cgs))  # Dimensionless time, g/cm^3.
@@ -80,15 +80,18 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 
-REPO = Path("/home/hey4/rich_tde")
-sys.path.insert(0, str(REPO / "dev"))
+REPO = "/home/hey4/rich_tde"
+sys.path.insert(0, os.path.join(REPO, "dev"))
 
 import dev  # noqa: E402, F401 -- applies the repository plotting style
 
@@ -103,10 +106,10 @@ from richio.plots import scalar_map  # noqa: E402
 from scipy.integrate import solve_ivp  # noqa: E402
 
 DEFAULT_CASES = ("1e4:77", "1e5:161", "1e6:877")
-CACHE_ROOT = REPO / "data/processed/NozzleZoomSlices"
+CACHE_ROOT = os.path.join(REPO, "data/processed/NozzleZoomSlices")
 RESOLUTION = 768
 XY_WINDOW_RP = (-1.0, 2.0, -1.5, 1.5)
-OUTPUT = REPO / "data/processed/PresentationNozzleSlices/pw-orbit-test.png"
+OUTPUT = os.path.join(REPO, "data/processed/PresentationNozzleSlices/pw-orbit-test.png")
 
 
 def pw_acceleration(_, state, mass, schwarzschild_radius):
@@ -158,14 +161,14 @@ def main(
         None,
         help="RUN:SNAPNUM; repeat for panels. Defaults: 1e4:77, 1e5:161, 1e6:877.",
     ),
-    cache_root: Path = typer.Option(
+    cache_root: str = typer.Option(
         CACHE_ROOT,
         help="Input root containing RUN/grids/nozzle_zoom_snap_NNNN_RES.npz.",
     ),
     resolution: int = typer.Option(
         RESOLUTION, min=16, help="Resolution suffix of existing input caches."
     ),
-    output: Path = typer.Option(OUTPUT, help="Output figure path (.png or .pdf)."),
+    output: str = typer.Option(OUTPUT, help="Output figure path (.png or .pdf)."),
     dpi: int = typer.Option(240, min=50, help="Output raster resolution."),
     overwrite: bool = typer.Option(
         False, help="Replace the output figure if it exists."
@@ -173,23 +176,25 @@ def main(
     list_only: bool = typer.Option(False, help="List required cache files and exit."),
 ) -> None:
     """Plot returning ballistic PW orbits over existing XY nozzle density caches."""
+    cache_root = os.path.normpath(cache_root)
+    output = os.path.normpath(output)
     selected = []
     for item in case or DEFAULT_CASES:
         run, snapshot = item.split(":")
         if run not in TDE_PARAMETERS:
             raise typer.BadParameter("Run must be 1e4, 1e5, or 1e6.")
-        path = (
-            cache_root
-            / run
-            / "grids"
-            / f"nozzle_zoom_snap_{int(snapshot):04d}_{resolution}.npz"
+        path = os.path.join(
+            cache_root,
+            run,
+            "grids",
+            f"nozzle_zoom_snap_{int(snapshot):04d}_{resolution}.npz",
         )
         selected.append((run, path))
         print(f"Input: {path}")
     print(f"Output: {output}")
     if list_only:
         return
-    if output.exists() and not overwrite:
+    if os.path.exists(output) and not overwrite:
         print("Output exists; use --overwrite to replace it.")
         return
 
@@ -235,7 +240,7 @@ def main(
         axis.set_title(rf"$10^{{{run[-1]}}}\,M_\odot$")
         axis.set_xlabel(r"$x/r_p$")
     axes[0, 0].set_ylabel(r"$y/r_p$")
-    output.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
     fig.savefig(output, dpi=dpi)
     plt.close(fig)
 

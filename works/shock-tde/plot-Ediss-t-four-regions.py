@@ -63,12 +63,12 @@ Loading examples
 ----------------
 Open the generated rate figure and inspect its pixel array::
 
-    from pathlib import Path
+    import os
     from PIL import Image
     import numpy as np
 
-    root = Path("data/processed/EdissFourRegions")
-    path = root / "figures/Ediss-rate-over-Delta-vs-t-four-regions.png"
+    root = "data/processed/EdissFourRegions"
+    path = os.path.join(root, "figures/Ediss-rate-over-Delta-vs-t-four-regions.png")
     with Image.open(path) as image:
         pixels = np.asarray(image.convert("RGBA"))
     print(pixels.shape, pixels.dtype)  # (H, W, 4), uint8
@@ -78,7 +78,7 @@ For numerical analysis, read the input table rather than the rendered PNG::
     import unyt as u
     import richio
 
-    table = np.loadtxt(root / "Ediss-t-four-regions-1e4-n10.txt", ndmin=2)
+    table = np.loadtxt(os.path.join(root, "Ediss-t-four-regions-1e4-n10.txt"), ndmin=2)
     order = np.argsort(table[:, 1], kind="stable")
     table = table[order]
     table = table[table[:, 2] >= 0.1]
@@ -94,11 +94,14 @@ For numerical analysis, read the input table rather than the rendered PNG::
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 
 import dev  # noqa: F401  # isort: skip  # Apply the study style before pyplot.
@@ -109,8 +112,8 @@ import unyt as u
 
 import richio
 
-DATA_DIR = Path("/home/hey4/rich_tde/data/processed/EdissFourRegions")
-FIGURE_DIR = DATA_DIR / "figures"
+DATA_DIR = "/home/hey4/rich_tde/data/processed/EdissFourRegions"
+FIGURE_DIR = os.path.join(DATA_DIR, "figures")
 POWER_UNIT = "code_length**2*code_mass/code_time**3"
 TIME_UNIT = "code_time"
 REGIONS = (
@@ -146,9 +149,9 @@ def physical_scales(label: str):
     return fallback_time, circularization_energy, minimum_tfb
 
 
-def load_mode(label: str, data_dir: Path, input_pattern: str):
-    path = data_dir / input_pattern.format(run=label)
-    with path.open() as handle:
+def load_mode(label: str, data_dir: str, input_pattern: str):
+    path = os.path.normpath(os.path.join(data_dir, input_pattern.format(run=label)))
+    with open(path) as handle:
         header = handle.readline().lstrip("# ").split()
     if (
         header
@@ -237,8 +240,8 @@ def plot_cumulative(runs, data_dir, input_pattern, output_dir, overwrite):
 
 def save_figure(fig, output_dir, stem, overwrite):
     for suffix in ("png", "pdf"):
-        path = output_dir / f"{stem}.{suffix}"
-        if overwrite or not path.exists():
+        path = os.path.join(output_dir, f"{stem}.{suffix}")
+        if overwrite or not os.path.exists(path):
             fig.savefig(path, dpi=240)
             print(f"Saved {path}")
         else:
@@ -250,10 +253,10 @@ app = typer.Typer(add_completion=False)
 
 @app.command()
 def main(
-    data_dir: Path = typer.Option(
+    data_dir: str = typer.Option(
         DATA_DIR, help="Directory containing nozzle-split time-series tables."
     ),
-    output_dir: Path | None = typer.Option(
+    output_dir: str | None = typer.Option(
         None, help="Figure directory; default DATA_DIR/figures."
     ),
     input_pattern: str = typer.Option(
@@ -269,8 +272,13 @@ def main(
     runs = run or list(CONFIGS)
     if any(label not in CONFIGS for label in runs):
         raise typer.BadParameter("--run must be 1e4, 1e5 or 1e6")
-    output_dir = output_dir or data_dir / "figures"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = os.path.normpath(data_dir)
+    output_dir = (
+        os.path.normpath(output_dir)
+        if output_dir is not None
+        else os.path.join(data_dir, "figures")
+    )
+    os.makedirs(output_dir, exist_ok=True)
     plot_rate(runs, data_dir, input_pattern, output_dir, overwrite)
     plot_cumulative(runs, data_dir, input_pattern, output_dir, overwrite)
 

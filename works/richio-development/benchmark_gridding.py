@@ -82,11 +82,14 @@ import json
 import multiprocessing as mp
 import os
 import resource
-from pathlib import Path
 from time import perf_counter
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 os.environ.setdefault("MPLBACKEND", "Agg")
 
@@ -201,7 +204,7 @@ def main():
         parser.error("--sinh-scale is required with --z-spacing=sinh")
 
     context = mp.get_context("spawn")
-    snapshot_path = Path(arguments.snapshot)
+    snapshot_path = os.path.normpath(arguments.snapshot)
     for resolution in arguments.resolutions or [256]:
         for workers in arguments.workers:
             result_queue = context.Queue()

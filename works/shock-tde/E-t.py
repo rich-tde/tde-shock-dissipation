@@ -83,16 +83,15 @@ Loading examples
 ----------------
 Load all eight columns and recover physical energies from the units header::
 
-    from pathlib import Path
     import numpy as np
     import unyt as u
     import richio
 
-    path = Path("data/processed/SimpleTimeseries/E-t-1e4.txt")
+    path = "data/processed/SimpleTimeseries/E-t-1e4.txt"
     table = np.loadtxt(path, ndmin=2)  # (N, 8), numerical values only
     snapshot = table[:, 0].astype(int)
     time_tfb = table[:, 2]
-    with path.open() as stream:
+    with open(path) as stream:
         next(stream)  # Column names.
         next(stream)  # '# Units'.
         units = next(stream).lstrip("#").split()
@@ -107,7 +106,6 @@ import glob
 import os
 import re
 from collections import Counter
-from pathlib import Path
 
 import numpy as np
 import typer
@@ -115,7 +113,11 @@ import unyt as u
 from loguru import logger
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 
 import dev
@@ -127,10 +129,10 @@ app = typer.Typer(add_completion=False)
 @app.command()
 def main(
     mode: int = typer.Option(..., min=1, max=3, help="1: 1e4, 2: 1e5, 3: 1e6 Msun."),
-    data_dir: list[Path] | None = typer.Option(
+    data_dir: list[str] | None = typer.Option(
         None, help="Repeat for relocated copies of this mode's run/restart directories."
     ),
-    output: Path | None = typer.Option(
+    output: str | None = typer.Option(
         None,
         help="Override the output table; use a fresh path for a changed selection.",
     ),
@@ -183,9 +185,11 @@ def main(
     else:
         raise ValueError("Invalid mode. Please choose 1, 2, or 3.")
 
-    data_directories = tuple(str(p) for p in data_dir) if data_dir else data_directories
-    output_file = str(output) if output is not None else output_file
-    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+    data_directories = (
+        tuple(os.path.normpath(p) for p in data_dir) if data_dir else data_directories
+    )
+    output_file = os.path.normpath(output) if output is not None else output_file
+    os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
     cadence = stride
 
     tmin = (
@@ -218,8 +222,8 @@ def main(
     ]
     if (
         not overwrite
-        and Path(output_file).exists()
-        and Path(output_file).stat().st_size
+        and os.path.exists(output_file)
+        and os.path.getsize(output_file)
     ):
         with open(output_file) as handle:
             header = handle.readline().lstrip("# ").split()

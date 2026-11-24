@@ -75,12 +75,12 @@ Loading examples
 ----------------
 Open the rendered figure as an image; no array transpose is needed::
 
-    from pathlib import Path
+    import os
     import dev
     import matplotlib.pyplot as plt
 
-    path = Path("data/processed/CoolingChecks/timescale-maps/1e4")
-    image = plt.imread(path / "timescales-1e4-snap-0108.png")
+    path = "data/processed/CoolingChecks/timescale-maps/1e4"
+    image = plt.imread(os.path.join(path, "timescales-1e4-snap-0108.png"))
     print(image.shape, image.dtype)  # (height,width,RGB/RGBA), not a physical grid.
     fig, ax = plt.subplots()
     ax.imshow(image)
@@ -89,10 +89,14 @@ Open the rendered figure as an image; no array transpose is needed::
 """
 
 import os
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache" / "matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache",
+        "matplotlib",
+    ),
 )
 
 import matplotlib
@@ -110,7 +114,7 @@ import richio
 
 app = typer.Typer()
 A_RAD = 4 * u.stefan_boltzmann_constant / u.c
-OUTPUT_ROOT = Path("/home/hey4/rich_tde/data/processed/CoolingChecks/timescale-maps")
+OUTPUT_ROOT = "/home/hey4/rich_tde/data/processed/CoolingChecks/timescale-maps"
 
 
 def mode_settings(mode: int):
@@ -170,11 +174,11 @@ def mode_settings(mode: int):
     raise ValueError("Invalid mode. Please choose 1, 2, or 3.")
 
 
-def find_snapshot(datadir: str, snapnum: int) -> Path:
+def find_snapshot(datadir: str, snapnum: int) -> str:
     """Resolve either snapshot naming convention used by the runs."""
     for filename in (f"snap_full_{snapnum}.h5", f"snap_{snapnum}.h5"):
-        path = Path(datadir) / filename
-        if path.exists():
+        path = os.path.join(datadir, filename)
+        if os.path.exists(path):
             return path
     raise FileNotFoundError(f"No snapshot {snapnum} in {datadir}")
 
@@ -194,10 +198,10 @@ def plot_map(ax, field, xspace, yspace, label, **kwargs):
 
 
 def make_figure(
-    snap_path: Path,
+    snap_path: str,
     snapnum: int,
     settings,
-    output_dir: Path,
+    output_dir: str,
     resolution_xy: int = 256,
     resolution_z: int = 512,
     z_half_width_rp: float = 10,
@@ -278,7 +282,9 @@ def make_figure(
         r"$\log_{10}(H/R_*)$",
     )
 
-    output_file = output_dir / f"timescales-{settings['label']}-snap-{snapnum:04d}.png"
+    output_file = os.path.join(
+        output_dir, f"timescales-{settings['label']}-snap-{snapnum:04d}.png"
+    )
     fig.savefig(output_file, dpi=200)
     plt.close(fig)
     logger.info(f"Saved {output_file}")
@@ -287,13 +293,13 @@ def make_figure(
 @app.command()
 def main(
     mode: int = typer.Option(..., min=1, max=3, help="1: 1e4, 2: 1e5, 3: 1e6"),
-    input_dir: Path | None = typer.Option(
+    input_dir: str | None = typer.Option(
         None, help="Override the mode's HDF5 directory"
     ),
     snapshot_number: list[int] | None = typer.Option(
         None, help="Exact snapshot number; repeat to select several"
     ),
-    output_root: Path = typer.Option(
+    output_root: str = typer.Option(
         OUTPUT_ROOT, help="Root for per-run PNG directories"
     ),
     resolution_xy: int = typer.Option(
@@ -312,6 +318,7 @@ def main(
     if xy_half_width is not None:
         settings["xy"] = xy_half_width
     if input_dir is not None:
+        input_dir = os.path.normpath(input_dir)
         selected = snapshot_number or [n for _, nums in settings["runs"] for n in nums]
         settings["runs"] = ((input_dir, selected),)
     elif snapshot_number:
@@ -323,16 +330,16 @@ def main(
             )
         else:
             settings["runs"] = ((settings["runs"][0][0], snapshot_number),)
-    output_dir = output_root / settings["label"]
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = os.path.join(os.path.normpath(output_root), settings["label"])
+    os.makedirs(output_dir, exist_ok=True)
 
     for datadir, snapnums in settings["runs"]:
         logger.info(f"Processing directory: {datadir}")
         for snapnum in snapnums:
-            output_file = output_dir / (
-                f"timescales-{settings['label']}-snap-{snapnum:04d}.png"
+            output_file = os.path.join(
+                output_dir, f"timescales-{settings['label']}-snap-{snapnum:04d}.png"
             )
-            if output_file.exists() and not overwrite:
+            if os.path.exists(output_file) and not overwrite:
                 logger.info(f"Skipping existing {output_file}")
                 continue
             try:

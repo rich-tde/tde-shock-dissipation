@@ -48,16 +48,18 @@ Loading examples
 ----------------
 Inspect the close-up projection created above::
 
+    import os
+
     import imageio.v2 as imageio
     import numpy as np
-    from pathlib import Path
     from PIL import Image
 
-    root = Path("data/processed/Movies/snap21-density")
-    with imageio.get_reader(root / "tde_disk_proj.mp4") as movie:
+    root = "data/processed/Movies/snap21-density"
+    with imageio.get_reader(os.path.join(root, "tde_disk_proj.mp4")) as movie:
         rgb = movie.get_data(0)  # (H, W, 3), uint8
         print(movie.get_meta_data(), rgb.shape)
-    with Image.open(root / "frames/tde_disk_proj/frame_00000.png") as image:
+    path = os.path.join(root, "frames/tde_disk_proj/frame_00000.png")
+    with Image.open(path) as image:
         rgba = np.array(image.convert("RGBA"))  # (H, W, 4), uint8
 """
 
@@ -65,10 +67,13 @@ import argparse
 import os
 import sys
 import time
-from pathlib import Path
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 os.environ.setdefault("MPLBACKEND", "Agg")
 
@@ -110,7 +115,9 @@ def main(argv=None):
     )
     p.add_argument("--outdir", default="reports/gifs")
     p.add_argument(
-        "--frames-root", type=Path, help="PNG storage (default: <outdir>/frames)."
+        "--frames-root",
+        type=os.path.normpath,
+        help="PNG storage (default: <outdir>/frames).",
     )
     p.add_argument("--which", default="both", choices=["both", "wide", "disk"])
     p.add_argument(
@@ -133,13 +140,14 @@ def main(argv=None):
 
     import richio
 
-    output_dir = Path(args.outdir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    frames_root = args.frames_root or output_dir / "frames"
+    output_dir = os.path.normpath(args.outdir)
+    os.makedirs(output_dir, exist_ok=True)
+    frames_root = args.frames_root or os.path.join(output_dir, "frames")
     suffix = "_proj" if args.mode == "projection" else ""
     selected_views = ("wide", "disk") if args.which == "both" else (args.which,)
     if not args.overwrite and all(
-        (output_dir / f"tde_{tag}{suffix}.mp4").exists() for tag in selected_views
+        os.path.exists(os.path.join(output_dir, f"tde_{tag}{suffix}.mp4"))
+        for tag in selected_views
     ):
         print(f"Skipping existing movies in {output_dir}; use --overwrite to replace.")
         return 0
@@ -161,8 +169,8 @@ def main(argv=None):
     }
 
     def render(tag, box_size, zoom, elevation, gamma):
-        movie = output_dir / f"tde_{tag}{suffix}.mp4"
-        if movie.exists() and not args.overwrite:
+        movie = os.path.join(output_dir, f"tde_{tag}{suffix}.mp4")
+        if os.path.exists(movie) and not args.overwrite:
             print(f"Skipping existing {movie}; use --overwrite to replace.", flush=True)
             return
         grid_started = time.time()
@@ -178,8 +186,8 @@ def main(argv=None):
             zoom=zoom,
             elevation=elevation,
             gamma=gamma,
-            filename=str(movie),
-            frames_dir=str(frames_root / f"tde_{tag}{suffix}"),
+            filename=movie,
+            frames_dir=os.path.join(frames_root, f"tde_{tag}{suffix}"),
             **common,
         )
         elapsed = time.time() - render_started

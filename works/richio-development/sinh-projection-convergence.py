@@ -74,27 +74,30 @@ Loading examples
 ----------------
 Load the mixed-type CSV as a structured NumPy array and select the best row::
 
+    import os
     import numpy as np
-    from pathlib import Path
     from PIL import Image
 
-    root = Path("data/processed/RichioDevelopment/snap21-convergence")
+    root = "data/processed/RichioDevelopment/snap21-convergence"
     rows = np.atleast_1d(np.genfromtxt(
-        root / "convergence.csv", delimiter=",", names=True,
+        os.path.join(root, "convergence.csv"), delimiter=",", names=True,
         dtype=None, encoding="utf-8",
     ))  # shape (N,), named fields; not an ordinary numeric (N, 8) array
     best = rows[np.nanargmin(rows["normalized_l1"])]
     print(best["spacing"], best["scale"], best["res_z"], best["normalized_l1"])
-    with Image.open(root / "convergence.png") as image:
+    with Image.open(os.path.join(root, "convergence.png")) as image:
         rgba = np.array(image.convert("RGBA"))  # uint8 (810, 1800, 4)
 """
 
 import os
-from pathlib import Path
 from time import perf_counter
 
 os.environ.setdefault(
-    "MPLCONFIGDIR", str(Path(__file__).resolve().parents[2] / ".cache/matplotlib")
+    "MPLCONFIGDIR",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+        ".cache/matplotlib",
+    ),
 )
 os.environ.setdefault("MPLBACKEND", "Agg")
 
@@ -103,17 +106,18 @@ import matplotlib
 matplotlib.use("Agg")
 
 import dev  # noqa: F401  # isort: skip  # Configure style before pyplot.
+import click
 import matplotlib.pyplot as plt
 import numpy as np
 import typer
 
 import richio
 
-DEFAULT_SNAPSHOT = Path(
+DEFAULT_SNAPSHOT = (
     "/data1/projects/pi-rossiem/TDE_data/NewSnellius/"
     "R0.47M0.5BH10000beta1S60ComptonHiRes/snap_0.h5"
 )
-DEFAULT_OUTPUT = Path(
+DEFAULT_OUTPUT = (
     "/home/hey4/rich_tde/data/processed/RichioDevelopment/sinh-projection-convergence"
 )
 RESOLUTIONS = (64, 128, 256, 512, 1024)
@@ -157,10 +161,10 @@ def project(
 
 
 def main(
-    snapshot: Path = typer.Option(  # noqa: B008 - Typer declares options in defaults.
-        DEFAULT_SNAPSHOT, exists=True, readable=True
+    snapshot: str = typer.Option(  # noqa: B008 - Typer declares options in defaults.
+        DEFAULT_SNAPSHOT, click_type=click.Path(exists=True, readable=True)
     ),
-    output_dir: Path = typer.Option(  # noqa: B008 - Typer declares options in defaults.
+    output_dir: str = typer.Option(  # noqa: B008 - Typer declares options in defaults.
         DEFAULT_OUTPUT
     ),
     res_xy: int = typer.Option(128, min=2),
@@ -179,10 +183,12 @@ def main(
     """Run the convergence comparison and write its table and figure."""
     resolutions = res_z or RESOLUTIONS
     scales = scale or SCALES
-    output_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = output_dir / "convergence.csv"
-    figure_path = output_dir / "convergence.png"
-    if not overwrite and csv_path.exists() and figure_path.exists():
+    snapshot = os.path.normpath(snapshot)
+    output_dir = os.path.normpath(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+    csv_path = os.path.join(output_dir, "convergence.csv")
+    figure_path = os.path.join(output_dir, "convergence.png")
+    if not overwrite and os.path.exists(csv_path) and os.path.exists(figure_path):
         typer.echo(
             f"Skipping existing products in {output_dir}; use --overwrite to replace."
         )
@@ -238,7 +244,7 @@ def main(
             maps[("sinh", resolution_z, scale)] = sinh
 
     columns = tuple(rows[0])
-    with csv_path.open("w", encoding="utf-8") as stream:
+    with open(csv_path, "w", encoding="utf-8") as stream:
         stream.write(",".join(columns) + "\n")
         for row in rows:
             stream.write(",".join(str(row[column]) for column in columns) + "\n")
