@@ -15,6 +15,12 @@ DATADIRS = {
     "1e4": (os.path.join(TDE_DATA, "NewSnellius/R0.47M0.5BH10000beta1S60ComptonHiRes"),),
     "1e4midres": (os.path.join(TDE_DATA, "NewSnellius/R0.47M0.5BH10000beta1S60Compton"),),
     "1e4lowres": (os.path.join(TDE_DATA, "R0.47M0.5BH10000beta1S60n1.5ComptonLowResNewAMR"),),
+    "1e4streamhires": (
+        os.path.join(TDE_DATA, "StreamConvergence/R0.47M0.5BH10000beta1S60n1.5ComptonHiResStream"),
+    ),
+    "1e4streamhires2": (
+        os.path.join(TDE_DATA, "StreamConvergence/R0.47M0.5BH10000beta1S60n1.5ComptonHiResStream2"),
+    ),
     "1e5": (
         os.path.join(TDE_DATA, "YujieSnellius/R0.47M0.5BH100000beta1S60n1.5ComptonHiResNewAMR"),
     ),
@@ -25,12 +31,15 @@ DATADIRS = {
         os.path.join(TDE_DATA, "SS24_diag/TEMPTDE4_new"),
     ),
 }
+NPY_RUNS = ("1e4lowres", "1e4streamhires", "1e4streamhires2")
 
 # Mbh, Mstar, and Rstar in code units.  RICH uses G = 1.
 TDE_PARAMETERS = {
     "1e4": (1e4, 0.5, 0.47),
     "1e4midres": (1e4, 0.5, 0.47),
     "1e4lowres": (1e4, 0.5, 0.47),
+    "1e4streamhires": (1e4, 0.5, 0.47),
+    "1e4streamhires2": (1e4, 0.5, 0.47),
     "1e5": (1e5, 0.5, 0.47),
     "1e6": (1e6, 0.5, 0.47),
     "ss24": (1e6, 1.0, 1.0),
@@ -45,11 +54,11 @@ def snapshot_number(path):
 def DATAPATHS(run):
     """Return snapshot paths sorted by number for a run in ``DATADIRS``.
 
-    ``1e4lowres`` returns NumPy folders; the other runs return HDF5 files.
+    Runs in ``NPY_RUNS`` return NumPy folders; the other runs return HDF5 files.
     ``snap_full_N.h5`` is preferred when both versions of a snapshot exist.
     """
     snapshots = {}
-    numpy_folders = run == "1e4lowres"
+    numpy_folders = run in NPY_RUNS
     for datadir in DATADIRS[run]:
         for path in glob.glob(os.path.join(datadir, "snap_*" if numpy_folders else "snap_*.h5")):
             name = os.path.basename(path)

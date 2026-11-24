@@ -15,6 +15,11 @@ def pericenter(run):
     return r_star * (m_bh / m_star) ** (1 / 3)
 
 
+def softening_radius(run):
+    """Radius of RICH's harmonic gravity core, in code lengths: 0.5 r_p for 1e6, 0.6 r_p otherwise."""
+    return (0.5 if run == "1e6" else 0.6) * pericenter(run)
+
+
 def schwarzschild_radius(m_bh):
     """The ``Rg = 4.21 M / 1e6`` (≈ 2GM/c²) of RICH's potential -M/(r - Rg), in code lengths."""
     return 4.21 * m_bh / 1e6
