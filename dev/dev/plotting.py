@@ -3,6 +3,7 @@
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import numpy as np
+from scipy.signal import savgol_filter
 
 MACH_THRESHOLDS = (2.0, 7.0, 15.0, 25.0)
 MACH_LABELS = ("<2", "2–7", "7–15", "15–25", "≥25")
@@ -54,3 +55,19 @@ def colorbar_above(fig, ax, image, label):
     if image.norm is MACH_NORM:
         bar.set_ticks(np.arange(len(MACH_LABELS)), labels=MACH_LABELS)
     return bar
+
+
+def savgol_smooth(values, window_length, polyorder=2, log=False):
+    """Savitzky-Golay filter over the finite points (positive ones in log10 if log); the rest become NaN."""
+    values = np.asarray(values, dtype=float)
+    valid = np.isfinite(values) & ((values > 0) if log else True)
+    window_length = min(window_length, (valid.sum() - 1) // 2 * 2 + 1)
+    smoothed = np.full_like(values, np.nan)
+    if window_length <= polyorder:
+        smoothed[valid] = values[valid]
+        return smoothed
+    fitted = savgol_filter(
+        np.log10(values[valid]) if log else values[valid], window_length, polyorder
+    )
+    smoothed[valid] = 10**fitted if log else fitted
+    return smoothed

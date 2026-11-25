@@ -15,15 +15,15 @@ def pericenter(run):
     return r_star * (m_bh / m_star) ** (1 / 3)
 
 
-def softening_radius(run):
-    """Radius of RICH's harmonic gravity core, in code lengths: 0.5 r_p for 1e6, 0.6 r_p otherwise."""
-    return (0.5 if run == "1e6" else 0.6) * pericenter(run)
-
-
 def fallback_time(run):
     """Return time of the most bound debris for beta = 1, in code times."""
     m_bh, m_star, r_star = TDE_PARAMETERS[run]
     return np.pi / np.sqrt(2) * np.sqrt(r_star**3 / m_star) * np.sqrt(m_bh / m_star)
+
+
+def softening_radius(run):
+    """Radius of RICH's harmonic gravity core, in code lengths: 0.5 r_p for 1e6, 0.6 r_p otherwise."""
+    return (0.5 if run == "1e6" else 0.6) * pericenter(run)
 
 
 def schwarzschild_radius(m_bh):
