@@ -9,7 +9,7 @@ ballistic orbits are descriptive choices, not an automatic classifier.
 Input files
 -----------
 Run from ``/home/hey4/rich_tde``. ``ROOT`` is
-``data/processed/ShockFinderEdissSelection`` (``--result-root``), ``RUN`` is
+``data/processed/ShockFinderResults`` (``--result-root``), ``RUN`` is
 ``1e4``, ``1e5`` or ``ss24`` and ``NNNN`` a four-digit snapshot number.
 
 ``ROOT/RUN/shockfinder_snap_NNNN.npz``
@@ -80,7 +80,7 @@ Loading example
 ::
 
     from dev.io import load_npz
-    root = "data/processed/ShockFinderEdissSelection/analysis/zoom-shocks"
+    root = "data/processed/ShockFinderResults/analysis/zoom-shocks"
     orbit = load_npz(f"{root}/nozzle-orbit-zoom50/1e4/nozzle_orbit_zoom50_snap_0077.npz",
                      prefix="nozzle_orbit_")
     plt.pcolormesh(orbit["s_rsun"], orbit["z_rsun"], orbit["density"].T)
@@ -100,7 +100,7 @@ import unyt as u
 import richio
 
 CODE_LENGTH = richio.units.lscale
-RESULT_ROOT = "/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection"
+RESULT_ROOT = "/home/hey4/rich_tde/data/processed/ShockFinderResults"
 PRODUCTS = ("geometry", "self", "nozzle", "self-mach-max", "mach")
 CACHE_NAMES = {
     "geometry": "cells/{run}_shock_cells_snap_{snapnum:04d}.npz",

@@ -151,6 +151,7 @@ import numpy as np
 import typer
 import unyt as u
 from dev.datapaths import TDE_PARAMETERS, snapshot_number
+from dev.tde import code_gm, fallback_time, pw_orbit_derivatives
 from richio.plots import scalar_map
 from scipy.integrate import solve_ivp
 
@@ -234,12 +235,7 @@ class RunConfig:
 
     @property
     def t_fb(self) -> float:
-        return (
-            math.pi
-            / math.sqrt(2.0)
-            * math.sqrt(self.r_star**3 / self.m_star)
-            * math.sqrt(self.m_bh / self.m_star)
-        )
+        return fallback_time(self.run)
 
 
 RUNS = {
@@ -268,8 +264,7 @@ def selected_snapshots(
     use_defaults = not snapshots and not tfbs and not include_last
     requested = REQUESTED_TFBS[run] if use_defaults else (tfbs or [])
     selected = [
-        (snapshot_number(path), path, False)
-        for path in SNAPSHOT_TFB(run, requested)
+        (snapshot_number(path), path, False) for path in SNAPSHOT_TFB(run, requested)
     ]
     selected.extend((number, available[number], False) for number in snapshots or [])
     if use_defaults or include_last:
@@ -300,14 +295,6 @@ def sound_speed(density, pressure, internal_energy):
     return np.sqrt(gamma_eff * pressure / density)
 
 
-def pw_orbit_derivatives(_, state, mass, schwarzschild_radius):
-    """Paczynski-Wiita orbit equation used by the RICH TDE setup."""
-    x, y, vx, vy = state
-    radius = np.hypot(x, y)
-    factor = -mass / (radius * (radius - schwarzschild_radius) ** 2)
-    return vx, vy, factor * x, factor * y
-
-
 def returning_orbit_grid(
     config: RunConfig,
     time_tfb: float,
@@ -322,20 +309,19 @@ def returning_orbit_grid(
     reference_pericenter = config.r_p
     pericenter = radius_scale * reference_pericenter
     schwarzschild_radius = PW_SCHWARZSCHILD_RSUN_1E6 * config.m_bh / 1e6
-    energy_spread = (
-        config.m_star * (config.m_bh / config.m_star) ** (1 / 3) / config.r_star
-    )
+    gm = code_gm(config.run)
+    energy_spread = gm * config.r_star / reference_pericenter**2
     binding_energy = -energy_spread * time_tfb ** (-2 / 3)
     pericenter_speed = np.sqrt(
-        2 * (config.m_bh / (pericenter - schwarzschild_radius) + binding_energy)
+        2 * (gm / (pericenter - schwarzschild_radius) + binding_energy)
     )
-    newtonian_period = 2 * np.pi * config.m_bh / (-2 * binding_energy) ** 1.5
+    newtonian_period = 2 * np.pi * gm / (-2 * binding_energy) ** 1.5
 
     solution = solve_ivp(
         pw_orbit_derivatives,
         (0.0, 1.6 * newtonian_period),
         (pericenter, 0.0, 0.0, -pericenter_speed),
-        args=(config.m_bh, schwarzschild_radius),
+        args=(gm, schwarzschild_radius),
         rtol=1e-9,
         atol=1e-11,
         dense_output=True,
@@ -798,7 +784,9 @@ def main(
     cache_paths = []
     rebuilt = False
     for snapnum, path, _ in selected:
-        cache_path = os.path.join(cache_dir, f"nozzle_yz_snap_{snapnum:04d}_{resolution}.npz")
+        cache_path = os.path.join(
+            cache_dir, f"nozzle_yz_snap_{snapnum:04d}_{resolution}.npz"
+        )
         cache_paths.append(cache_path)
         if overwrite or not cache_complete(
             cache_path, resolution, y_center_rsun, box_scale
@@ -815,16 +803,22 @@ def main(
     diagnostic_color_limits = diagnostic_limits(cache_paths)
     for (snapnum, _, _), cache_path in zip(selected, cache_paths):
         broad = os.path.join(output_dir, f"nozzle_yz_snap_{snapnum:04d}.png")
-        diagnostics = os.path.join(output_dir, f"nozzle_yz_diagnostics_snap_{snapnum:04d}.png")
+        diagnostics = os.path.join(
+            output_dir, f"nozzle_yz_diagnostics_snap_{snapnum:04d}.png"
+        )
         for destination, renderer, limits in (
             (broad, render_broad, broad_limits),
             (diagnostics, render_diagnostics, diagnostic_color_limits),
         ):
             exists = os.path.isfile(destination) and os.path.getsize(destination) > 0
             if exists and not overwrite and not rerender and not rebuilt:
-                print(f"[{config.run}] exists {os.path.basename(destination)}", flush=True)
+                print(
+                    f"[{config.run}] exists {os.path.basename(destination)}", flush=True
+                )
                 continue
-            print(f"[{config.run}] rendering {os.path.basename(destination)}", flush=True)
+            print(
+                f"[{config.run}] rendering {os.path.basename(destination)}", flush=True
+            )
             renderer(cache_path, destination, limits, dpi)
 
 

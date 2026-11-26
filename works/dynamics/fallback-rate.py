@@ -29,7 +29,7 @@ Output files
     The earliest outgoing stellar passage is also retained.
 
 ``data/processed/FallbackRate/energy-<run>.txt``
-    The companion ``fallback_energy`` module writes the two-column ballistic
+    ``dev.tde.ballistic_fallback`` writes the two-column ballistic
     prediction from the snapshot nearest 0.5 t_fb: T/t_fb and mdot [Msun/yr].
     Its header records the native stellar-cell energy histogram and potential.
 
@@ -78,9 +78,9 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 
 import numpy as np
 import typer
+import unyt as u
 from dev.datapaths import DATADIRS, TDE_PARAMETERS
-from fallback_energy import compute_energy_fallback
-from scipy.integrate import solve_ivp
+from dev.tde import ballistic_fallback, star_frame_offset
 
 import dev
 import richio
@@ -88,26 +88,9 @@ import richio
 app = typer.Typer(add_completion=False)
 
 
-def moving_frame_offset(time, r_p, mbh):
-    """Return (dx, dy, dvy) for the simulation's G=1 parabolic frame orbit."""
-    rp = float(r_p.to_value("code_length"))
-    rs = 4.21 * mbh / 1e6
-
-    def orbit_rhs(t, state):
-        x, y, vx, vy = state
-        r = np.hypot(x, y)
-        acceleration = -mbh / (r * (r - rs) ** 2)
-        return vx, vy, acceleration * x, acceleration * y
-
-    # solve_ivp requires plain values; attach code units to the returned offset.
-    solution = solve_ivp(
-        orbit_rhs,
-        (0, float(time.to_value("code_time"))),
-        (rp, 0, 0, -np.sqrt(2 * mbh / (rp - rs))),
-        rtol=1e-9,
-        atol=1e-11,
-    )
-    x, y, _, vy = solution.y[:, -1]
+def moving_frame_offset(run, time):
+    """Return (dx, dy, dvy) of the star frame in the BH frame."""
+    x, y, _, vy = star_frame_offset(run, float(time.to_value("code_time")))
     return (
         x * richio.units.lscale,
         y * richio.units.lscale,
@@ -148,20 +131,19 @@ def main(
     M_BH = mbh * richio.units.mscale
     M_STAR = mstar * richio.units.mscale
     R_STAR = rstar * richio.units.lscale
-    G_CODE = richio.units.lscale**3 / (richio.units.mscale * richio.units.tscale**2)
     r_p = R_STAR * (M_BH / M_STAR) ** (1 / 3)
     t_fb = (
         np.pi
         / np.sqrt(2)
-        * np.sqrt(R_STAR**3 / (G_CODE * M_STAR))
+        * np.sqrt(R_STAR**3 / (M_STAR * u.G))
         * np.sqrt(M_BH / M_STAR)
     )
     header = (
         f"run={run}; nx={nx}; nz={2 * nx}; plane=y=0; x/rp=(0,5); z/rp=(-5,5)\n"
         f"sources={','.join(os.fspath(path) for path in DATADIRS[run])}\n"
-        f"M_BH={mbh:g}; M_STAR={mstar:g}; R_STAR={rstar:g}; beta=1; G_code=1\n"
+        f"M_BH={mbh:g}; M_STAR={mstar:g}; R_STAR={rstar:g}; beta=1; G=unyt.G\n"
         "nearest_cell; volume_selection=True; lower_edge_rectangle; all_gas; outside_Box=0\n"
-        "plain_frame=parabolic_G1_rs4.21M/1e6; full_frame=BH\n"
+        "plain_frame=parabolic_unytG_rs4.21M/1e6; full_frame=BH\n"
         f"rp_code_length={float(r_p):.16e}; tfb_code_time={float(t_fb):.16e}\n"
         "snapshot time_code time_tfb mdot_Msunyr mdot_halfres_Msunyr stored_BH_frame coverage"
     )
@@ -177,7 +159,7 @@ def main(
                 )
         rows = {int(row[0]): row.tolist() for row in np.loadtxt(output, ndmin=2)}
 
-    compute_energy_fallback(run, os.path.join(output_dir, f"energy-{run}.txt"))
+    ballistic_fallback(run, os.path.join(output_dir, f"energy-{run}.txt"))
     paths = dev.DATAPATHS(run)[part::parts]
     if parts > 1:
         numbers = {
@@ -201,7 +183,7 @@ def main(
         dvy = 0 * richio.units.lscale / richio.units.tscale
         options = {}
         if not full:
-            dx, dy, dvy = moving_frame_offset(time, r_p, mbh)
+            dx, dy, dvy = moving_frame_offset(run, time)
             bounds[[0, 2]] -= dx
             y_plane = -dy
             options["slice_coord"] = y_plane

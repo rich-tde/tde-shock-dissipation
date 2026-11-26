@@ -20,7 +20,7 @@ Modes ``1/2/3`` select ``1e4/1e5/1e6`` solar-mass BH models. Default
 
 Output files
 ------------
-``data/processed/ShockFinderEdissSelection/RUN/shockfinder_snap_NNNN.npz``
+``data/processed/ShockFinderResults/RUN/shockfinder_snap_NNNN.npz``
     Compressed NumPy archive; the absolute default root is under
     ``/home/hey4/rich_tde`` and can be set with ``--output-root``. ``NNNN``
     is the zero-padded snapshot number. Load with ``np.load``; scalar
@@ -87,7 +87,7 @@ without loading the potentially much larger full-snapshot masks::
     import os
     import numpy as np
 
-    root = "data/processed/ShockFinderEdissSelection/1e4"
+    root = "data/processed/ShockFinderResults/1e4"
     with np.load(os.path.join(root, "shockfinder_snap_0077.npz")) as data:
         surface_index = data["surf_idx"]
         mach = data["mach_T"]
@@ -128,7 +128,7 @@ from richio import shockfinder as sf
 
 app = typer.Typer(add_completion=False)
 
-OUTPUT_ROOT = "/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection"
+OUTPUT_ROOT = "/home/hey4/rich_tde/data/processed/ShockFinderResults"
 REQUESTED_TFBS = {
     "1e4": (0.5, 1.0, 1.5, 2.0),
     "1e5": (0.3, 0.5),

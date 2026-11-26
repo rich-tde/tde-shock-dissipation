@@ -10,7 +10,7 @@ integrals. Counts include all line-of-sight surface cells within the plotted
 
 Input files
 -----------
-Let ``ROOT=/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection``.
+Let ``ROOT=/home/hey4/rich_tde/data/processed/ShockFinderResults``.
 
 ``ROOT/RUN/shockfinder_snap_NNNN.npz``
     Produced by ``shock-finder-ediss-selection.py``. Required keys are
@@ -110,7 +110,7 @@ Load a current-schema cache and plot its unfiltered XY surface-cell counts::
     import matplotlib.pyplot as plt
     import numpy as np
 
-    root = "data/processed/ShockFinderEdissSelection/analysis/shock-locations"
+    root = "data/processed/ShockFinderResults/analysis/shock-locations"
     with np.load(os.path.join(root, "1e4/grids/shock_locations_snap_0151.npz")) as data:
         x = data["xy_shock_x_edges"]
         y = data["xy_shock_y_edges"]
@@ -158,7 +158,7 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 import richio
 
-RESULT_ROOT = "/home/hey4/rich_tde/data/processed/ShockFinderEdissSelection"
+RESULT_ROOT = "/home/hey4/rich_tde/data/processed/ShockFinderResults"
 OUTPUT_ROOT = os.path.join(RESULT_ROOT, "analysis", "shock-locations")
 PER_CELL_ROOT = os.path.join(RESULT_ROOT, "analysis", "per-cell")
 DEFAULT_SHOCK_MACH_MIN = 1.8
