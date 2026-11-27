@@ -140,9 +140,14 @@ os.environ.setdefault(
     ),
 )
 
-from dev.datapaths import DATAPATHS, TDE_PARAMETERS, snapshot_number
+from dev.datapaths import DATAPATHS, snapshot_number
+from dev.tde import (
+    bh_frame_positions,
+    bh_frame_velocities,
+    needs_frame_switch,
+    tde_basics,
+)
 
-import dev
 import richio
 
 app = typer.Typer(add_completion=False)
@@ -164,63 +169,6 @@ def scalar_time(snap):
         "code_time",
         registry=snap.time.units.registry,
     )
-
-
-def run_scales(run: str):
-    """Return TDE scales in the RICH code-unit registry."""
-
-    black_hole_mass_value, stellar_mass_value, stellar_radius_value = TDE_PARAMETERS[
-        run
-    ]
-    black_hole_mass = black_hole_mass_value * richio.units.mscale
-    stellar_mass = stellar_mass_value * richio.units.mscale
-    stellar_radius = stellar_radius_value * richio.units.lscale
-    pericenter_radius = stellar_radius * (black_hole_mass / stellar_mass) ** (1 / 3)
-    escape_speed = np.sqrt(2 * u.G * black_hole_mass / pericenter_radius)
-    crossing_time = pericenter_radius / escape_speed
-    fallback_time = (
-        np.pi
-        / np.sqrt(2)
-        * np.sqrt(stellar_radius**3 / (u.G * stellar_mass))
-        * np.sqrt(black_hole_mass / stellar_mass)
-    )
-    return (
-        black_hole_mass,
-        stellar_mass,
-        stellar_radius,
-        pericenter_radius,
-        escape_speed,
-        crossing_time,
-        fallback_time,
-    )
-
-
-def needs_frame_switch(run: str, snapshot_path: str) -> bool:
-    """Match the established comoving-to-BH-frame convention in ``E-t.py``."""
-
-    if run == "1e6":
-        return os.path.basename(os.path.dirname(snapshot_path)) == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(snapshot_path)) is not None
-
-
-def bh_frame_coordinates_and_velocity(snap, run: str, snapshot_path: str, scales):
-    """Return position and velocity components in the BH frame."""
-
-    x, y, z = snap.X, snap.Y, snap.Z
-    vx, vy, vz = snap.vx, snap.vy, snap.vz
-    switched = needs_frame_switch(run, snapshot_path)
-    if switched:
-        black_hole_mass, stellar_mass, stellar_radius = scales[:3]
-        offset = dev.reference_frame_offset(
-            t=scalar_time(snap),
-            Mbh=black_hole_mass,
-            Mstar=stellar_mass,
-            Rstar=stellar_radius,
-            beta=1,
-        )
-        x, y = x + offset[0], y + offset[1]
-        vx, vy = vx + offset[2], vy + offset[3]
-    return x, y, z, vx, vy, vz, switched
 
 
 def wrapped_angular_distance(angle, center):
@@ -292,22 +240,14 @@ def analyse_snapshot(
 ):
     """Load and analyse one snapshot, returning scalar output columns."""
 
-    scales = run_scales(run)
-    (
-        black_hole_mass,
-        _,
-        _,
-        pericenter_radius,
-        escape_speed,
-        crossing_time,
-        fallback_time,
-    ) = scales
-    schwarzschild_radius = 2 * u.G * black_hole_mass / u.c**2
+    tde = tde_basics(run)
+    escape_speed = np.sqrt(2 * u.G * tde.Mbh / tde.r_p)
+    crossing_time = tde.r_p / escape_speed
+    schwarzschild_radius = 2 * u.G * tde.Mbh / u.c**2
     snap = richio.load(snapshot_path)
     time = scalar_time(snap)
-    x, y, z, vx, vy, vz, frame_switched = bh_frame_coordinates_and_velocity(
-        snap, run, snapshot_path, scales
-    )
+    x, y, z = bh_frame_positions(snap, run, snapshot_path)
+    vx, vy, vz = bh_frame_velocities(snap, run, snapshot_path)
 
     keep = np.asarray(snap.star > star_min, dtype=bool)
     if not np.any(keep):
@@ -365,8 +305,8 @@ def analyse_snapshot(
         "snapnum": snapnum,
         "snap_path": str(snapshot_path),
         "time_code": float(time.to_value("code_time")),
-        "time_tfb": float((time / fallback_time).to_value("dimensionless")),
-        "frame_switched": frame_switched,
+        "time_tfb": float((time / tde.t_fb).to_value("dimensionless")),
+        "frame_switched": needs_frame_switch(run, snapshot_path),
         "n_cells": len(snap),
         "star_min": star_min,
         "n_kept": int(keep.sum()),
@@ -380,7 +320,7 @@ def analyse_snapshot(
         "angular_half_width_deg": angular_half_width_deg,
         "radial_limit_rs": radial_limit_rs,
         "schwarzschild_radius_cm": float(schwarzschild_radius.to_value("cm")),
-        "r_p_cm": float(pericenter_radius.to_value("cm")),
+        "r_p_cm": float(tde.r_p.to_value("cm")),
         "v_esc_cm_s": float(escape_speed.to_value("cm/s")),
         "crossing_time_s": float(crossing_time.to_value("s")),
     }
@@ -460,7 +400,9 @@ def main(
             raise typer.BadParameter(
                 "Use --snapshot-file or --snapshot-index, not both"
             )
-        match = re.fullmatch(r"snap_(?:full_)?(\d+)\.h5", os.path.basename(snapshot_file))
+        match = re.fullmatch(
+            r"snap_(?:full_)?(\d+)\.h5", os.path.basename(snapshot_file)
+        )
         if match is None:
             raise typer.BadParameter(
                 "--snapshot-file must be snap_<n>.h5 or snap_full_<n>.h5"
@@ -480,7 +422,9 @@ def main(
     output_dir = os.path.join(output_root, run)
     logger.info(f"Processing {len(items)} of {len(paths)} snapshots for {run}")
     for position, (snapnum, snapshot_path) in enumerate(items, start=1):
-        output_path = os.path.join(output_dir, f"nozzle_dissipation_snap_{snapnum:04d}.npz")
+        output_path = os.path.join(
+            output_dir, f"nozzle_dissipation_snap_{snapnum:04d}.npz"
+        )
         if os.path.exists(output_path) and not overwrite:
             with np.load(output_path) as cached:
                 compatible = (

@@ -25,12 +25,12 @@ import os
 import numpy as np
 import typer
 import unyt as u
+from dev.datapaths import DATAPATHS, snapshot_number
+from dev.helpers import positions_and_time
+from dev.tde import needs_frame_switch, softening_radius, tde_basics
 from loguru import logger
 
 import richio
-from dev.datapaths import DATAPATHS, TDE_PARAMETERS, snapshot_number
-from dev.helpers import positions_and_time
-from dev.tde import needs_frame_switch, softening_radius
 
 OUTPUT_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
@@ -57,18 +57,19 @@ def potential(radius, m_bh, softening):
 def bound_energy_and_mass(snap, m_bh, softening):
     x, y, z, _ = positions_and_time(snap)
     radius = np.sqrt(x**2 + y**2 + z**2)
-    epsilon = 0.5 * (snap.vx**2 + snap.vy**2 + snap.vz**2) + potential(radius, m_bh, softening)
+    epsilon = 0.5 * (snap.vx**2 + snap.vy**2 + snap.vz**2) + potential(
+        radius, m_bh, softening
+    )
     mass = snap.density * snap.volume
     bound = epsilon < 0
     return np.sum(epsilon[bound] * mass[bound]), np.sum(mass[bound])
 
 
-def main(run: str = typer.Option(..., help="Run key in dev.datapaths, e.g. 1e4, 1e6, ss24.")):
-    m_bh, m_star, r_star = TDE_PARAMETERS[run]
-    m_bh, m_star = m_bh * richio.units.mscale, m_star * richio.units.mscale
-    r_star = r_star * richio.units.lscale
-    softening = softening_radius(run) * richio.units.lscale
-    t_fb = np.pi / np.sqrt(2) * np.sqrt(r_star**3 / u.G / m_star) * np.sqrt(m_bh / m_star)
+def main(
+    run: str = typer.Option(..., help="Run key in dev.datapaths, e.g. 1e4, 1e6, ss24."),
+):
+    tde = tde_basics(run)
+    softening = softening_radius(run)
     output = os.path.join(OUTPUT_DIR, f"Eorb-bound-t-{run}.txt")
     os.makedirs(os.path.dirname(output), exist_ok=True)
 
@@ -80,11 +81,11 @@ def main(run: str = typer.Option(..., help="Run key in dev.datapaths, e.g. 1e4, 
             continue
         snap = richio.load(path)
         time = positions_and_time(snap)[3]
-        energy, mass = bound_energy_and_mass(snap, m_bh, softening)
+        energy, mass = bound_energy_and_mass(snap, tde.Mbh, softening)
         row = [
             number,
             time.to_value("code_time"),
-            (time / t_fb).to_value("dimensionless"),
+            (time / tde.t_fb).to_value("dimensionless"),
             energy.to_value(COLUMNS["EORB_BOUND"]),
             mass.to_value("code_mass"),
         ]

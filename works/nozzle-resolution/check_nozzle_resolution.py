@@ -121,7 +121,6 @@ import argparse
 import json
 import math
 import os
-import re
 import sys
 from contextlib import nullcontext
 
@@ -137,8 +136,8 @@ os.environ.setdefault(
 import h5py
 import numpy as np
 from dev.datapaths import DATAPATHS, TDE_PARAMETERS, _snapshot_times, snapshot_number
+from dev.tde import needs_frame_switch, star_frame_offset, tde_basics
 
-import dev
 import richio
 
 REQUESTED_TFBS = {
@@ -153,26 +152,10 @@ def scalar(dataset: h5py.Dataset) -> float:
 
 
 def frame_offset(run: str, path: str, time: float) -> tuple[float, float]:
-    needs_offset = (
-        os.path.basename(os.path.dirname(path)) == "TEMPTDE"
-        if run == "1e6"
-        else re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
-    )
-    if not needs_offset:
+    if not needs_frame_switch(run, path):
         return 0.0, 0.0
-    mbh, mstar, rstar = TDE_PARAMETERS[run]
-    offset = dev.reference_frame_offset(
-        t=time * richio.units.tscale,
-        Mbh=mbh * richio.units.mscale,
-        Mstar=mstar * richio.units.mscale,
-        Rstar=rstar * richio.units.lscale,
-        beta=1,
-    )
-    code_length_cm = float((1.0 * richio.units.lscale).to_value("cm"))
-    return (
-        float(offset[0].to_value("cm")) / code_length_cm,
-        float(offset[1].to_value("cm")) / code_length_cm,
-    )
+    offset_x, offset_y, _, _ = star_frame_offset(run, time * richio.units.tscale)
+    return offset_x.to_value(richio.units.lscale), offset_y.to_value(richio.units.lscale)
 
 
 def cell_count(handle: h5py.File, groups: list[str]) -> int:
@@ -331,10 +314,7 @@ def main() -> None:
         return
 
     run = args.run
-    mbh, mstar, rstar = TDE_PARAMETERS[run]
-    fallback_time = (
-        math.pi / math.sqrt(2.0) * math.sqrt(rstar**3 / mstar) * math.sqrt(mbh / mstar)
-    )
+    fallback_time = tde_basics(run).t_fb.to_value(richio.units.tscale)
     if args.input_file is not None:
         snapnum = snapshot_number(args.input_file)
         selected = [(snapnum, args.input_file)]

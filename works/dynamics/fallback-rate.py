@@ -13,7 +13,7 @@ Input files
     All snapshots from the current cooling runs; modes 1/2/3 select 1e4/1e5/1e6.
     Prefer ``snap_full_N.h5`` when both names exist. Full snapshots are in the
     BH frame; plain ``snap_N.h5`` use a translating frame in all three runs.
-    Its parabolic orbit uses the simulation's G=1 and rs=4.21*M_BH/1e6.
+    Its parabolic orbit is ``dev.tde.star_frame_offset``.
     Required fields are Time, Box, X/Y/Z, Volume, Density and Vy.
 
 Output files
@@ -27,11 +27,6 @@ Output files
     Values are linear; negative rates mean net upward passage. Rows are sorted
     by time. This measures repeat crossings as well as first-return material.
     The earliest outgoing stellar passage is also retained.
-
-``data/processed/FallbackRate/energy-<run>.txt``
-    ``dev.tde.ballistic_fallback`` writes the two-column ballistic
-    prediction from the snapshot nearest 0.5 t_fb: T/t_fb and mdot [Msun/yr].
-    Its header records the native stellar-cell energy histogram and potential.
 
 Usage
 -----
@@ -48,8 +43,8 @@ the job merges them into the same complete, time-sorted text tables above.
 Rows are saved atomically after every snapshot. Reruns resume matching cached
 rows and process newly available snapshots. Changed grid/source settings
 require ``--overwrite`` or a separate ``--output-dir``. A newly available full
-snapshot replaces a cached plain snapshot of the same number. The energy
-cache independently checks its source/settings. For a small calculation::
+snapshot replaces a cached plain snapshot of the same number. For a small
+calculation::
 
     python works/dynamics/fallback-rate.py --mode 1 --end-snapshot 1
 
@@ -78,24 +73,13 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 
 import numpy as np
 import typer
-import unyt as u
 from dev.datapaths import DATADIRS, TDE_PARAMETERS
-from dev.tde import ballistic_fallback, star_frame_offset
+from dev.tde import star_frame_offset, tde_basics
 
 import dev
 import richio
 
 app = typer.Typer(add_completion=False)
-
-
-def moving_frame_offset(run, time):
-    """Return (dx, dy, dvy) of the star frame in the BH frame."""
-    x, y, _, vy = star_frame_offset(run, float(time.to_value("code_time")))
-    return (
-        x * richio.units.lscale,
-        y * richio.units.lscale,
-        vy * richio.units.lscale / richio.units.tscale,
-    )
 
 
 def save_flux(output, rows, header):
@@ -121,30 +105,22 @@ def main(
     part: int = typer.Option(0, min=0),
     parts: int = typer.Option(1, min=1),
 ):
-    """Calculate the complete flux curve and the 0.5-t_fb energy prediction."""
+    """Calculate the complete flux curve."""
     if nx % 2:
         raise typer.BadParameter("nx must be even for the half-resolution check")
     if part >= parts:
         raise typer.BadParameter("part must be smaller than parts")
     run = {1: "1e4", 2: "1e5", 3: "1e6"}[mode]
     mbh, mstar, rstar = TDE_PARAMETERS[run]
-    M_BH = mbh * richio.units.mscale
-    M_STAR = mstar * richio.units.mscale
-    R_STAR = rstar * richio.units.lscale
-    r_p = R_STAR * (M_BH / M_STAR) ** (1 / 3)
-    t_fb = (
-        np.pi
-        / np.sqrt(2)
-        * np.sqrt(R_STAR**3 / (M_STAR * u.G))
-        * np.sqrt(M_BH / M_STAR)
-    )
+    tde = tde_basics(run)
     header = (
         f"run={run}; nx={nx}; nz={2 * nx}; plane=y=0; x/rp=(0,5); z/rp=(-5,5)\n"
         f"sources={','.join(os.fspath(path) for path in DATADIRS[run])}\n"
         f"M_BH={mbh:g}; M_STAR={mstar:g}; R_STAR={rstar:g}; beta=1; G=unyt.G\n"
         "nearest_cell; volume_selection=True; lower_edge_rectangle; all_gas; outside_Box=0\n"
         "plain_frame=parabolic_unytG_rs4.21M/1e6; full_frame=BH\n"
-        f"rp_code_length={float(r_p):.16e}; tfb_code_time={float(t_fb):.16e}\n"
+        f"rp_code_length={tde.r_p.to_value(richio.units.lscale):.16e}; "
+        f"tfb_code_time={tde.t_fb.to_value(richio.units.tscale):.16e}\n"
         "snapshot time_code time_tfb mdot_Msunyr mdot_halfres_Msunyr stored_BH_frame coverage"
     )
     os.makedirs(output_dir, exist_ok=True)
@@ -159,7 +135,6 @@ def main(
                 )
         rows = {int(row[0]): row.tolist() for row in np.loadtxt(output, ndmin=2)}
 
-    ballistic_fallback(run, os.path.join(output_dir, f"energy-{run}.txt"))
     paths = dev.DATAPATHS(run)[part::parts]
     if parts > 1:
         numbers = {
@@ -178,12 +153,12 @@ def main(
             continue
         snap = richio.load(path)
         time = snap.time.squeeze()
-        bounds = np.array([0, -5, 5, 5]) * r_p
+        bounds = np.array([0, -5, 5, 5]) * tde.r_p
         y_plane = 0 * richio.units.lscale
         dvy = 0 * richio.units.lscale / richio.units.tscale
         options = {}
         if not full:
-            dx, dy, dvy = moving_frame_offset(run, time)
+            dx, dy, _, dvy = star_frame_offset(run, time)
             bounds[[0, 2]] -= dx
             y_plane = -dy
             options["slice_coord"] = y_plane
@@ -192,7 +167,7 @@ def main(
         mdot = coarse = 0 * richio.units.mscale / richio.units.tscale
         coverage = 0.0
         if box[1] <= y_plane <= box[4]:
-            spacing = 5 * r_p / nx
+            spacing = 5 * tde.r_p / nx
             x = np.linspace(bounds[0], bounds[2], nx, endpoint=False)
             z = np.linspace(bounds[1], bounds[3], 2 * nx, endpoint=False)
             ix = np.flatnonzero((x >= box[0]) & (x <= box[3]))
@@ -219,7 +194,7 @@ def main(
         rows[number] = [
             number,
             float(time.to_value("code_time")),
-            float((time / t_fb).to_value("dimensionless")),
+            float((time / tde.t_fb).to_value("dimensionless")),
             float(mdot.to_value("Msun/yr")),
             float(coarse.to_value("Msun/yr")),
             int(full),

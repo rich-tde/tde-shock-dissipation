@@ -168,7 +168,6 @@ Read the persisted map, select a nozzle diagnostic and plot with x horizontal::
 
 import math
 import os
-import re
 
 os.environ.setdefault(
     "MPLCONFIGDIR",
@@ -182,8 +181,8 @@ os.environ.setdefault(
 import numpy as np
 import unyt as u
 from dev.datapaths import TDE_PARAMETERS, snapshot_number
+from dev.tde import bh_frame_positions, tde_basics
 
-import dev
 import richio
 from dev import DATAPATHS
 
@@ -221,10 +220,7 @@ def config_for(run):
         "m_star": m_star,
         "r_star": r_star,
         "r_p": r_star * (m_bh / m_star) ** (1 / 3),
-        "t_fb": math.pi
-        / math.sqrt(2)
-        * math.sqrt(r_star**3 / m_star)
-        * math.sqrt(m_bh / m_star),
+        "t_fb": tde_basics(run).t_fb.to_value(richio.units.tscale),
     }
 
 
@@ -237,23 +233,6 @@ def snapshot_path(run, snapnum):
     paths = DATAPATHS(run)
     snapnums = [snapshot_number(path) for path in paths]
     return paths[snapnums.index(snapnum)]
-
-
-def coordinates(snapshot, path, config):
-    x, y, z = snapshot.X, snapshot.Y, snapshot.Z
-    plain = re.fullmatch(r"snap_\d+\.h5", os.path.basename(path))
-    if os.path.basename(os.path.dirname(path)) == "TEMPTDE" or (
-        config["run"] != "1e6" and plain
-    ):
-        offset = dev.reference_frame_offset(
-            t=scalar_time(snapshot),
-            Mbh=config["m_bh"] * richio.units.mscale,
-            Mstar=config["m_star"] * richio.units.mscale,
-            Rstar=config["r_star"] * richio.units.lscale,
-            beta=1,
-        )
-        x, y = x + offset[0], y + offset[1]
-    return x, y, z
 
 
 def load_direction(run, snapnum, root):
@@ -307,7 +286,7 @@ def calculate_snapshot(
     """
     snapshot = richio.load(str(path))
     time = scalar_time(snapshot)
-    x, y, z = coordinates(snapshot, path, config)
+    x, y, z = bh_frame_positions(snapshot, config["run"], path)
     r_p = config["r_p"] * richio.units.lscale
     r_star = config["r_star"] * richio.units.lscale
     m_star = config["m_star"] * richio.units.mscale

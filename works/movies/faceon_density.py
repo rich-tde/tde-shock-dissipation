@@ -79,10 +79,8 @@ After a complete run, inspect its encoded video::
 from __future__ import annotations
 
 import argparse
-import math
 import multiprocessing as mp
 import os
-import re
 import sys
 from dataclasses import dataclass
 
@@ -100,8 +98,8 @@ import numpy as np
 import richio.render as richrender
 import unyt as u
 from dev.datapaths import DATAPATHS, SNAPSHOT_TIMES, TDE_PARAMETERS, snapshot_number
+from dev.tde import bh_frame_positions, tde_basics
 
-import dev
 import richio
 
 REPO = "/home/hey4/rich_tde"
@@ -137,13 +135,7 @@ class RunConfig:
 
     @property
     def t_fb(self):
-        return (
-            math.pi
-            / math.sqrt(2.0)
-            * math.sqrt(self.r_star**3 / self.m_star)
-            * math.sqrt(self.m_bh / self.m_star)
-            * richio.units.tscale
-        )
+        return tde_basics(self.run).t_fb
 
 
 @dataclass(frozen=True)
@@ -204,13 +196,6 @@ def mode_settings(mode: int) -> RunConfig:
         return RUNS[mode]
     except KeyError as exc:
         raise ValueError("mode must be 1 (1e4), 2 (1e5), or 3 (1e6)") from exc
-
-
-def needs_reference_frame(run: str, path: str) -> bool:
-    """Match the dataset-specific switch used by works/shock-tde/E-t.py."""
-    if run == "1e6":
-        return os.path.basename(os.path.dirname(path)) == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
 
 
 def window_bounds(config: RunConfig, window: str = "proposed") -> tuple:
@@ -305,17 +290,7 @@ def project_snapshot(
 ):
     snap = richio.load(str(path))
     time = _time_scalar(snap)
-    x, y, z = snap.X, snap.Y, snap.Z
-    if needs_reference_frame(config.run, path):
-        offset = dev.reference_frame_offset(
-            t=time,
-            Mbh=config.m_bh * richio.units.mscale,
-            Mstar=config.m_star * richio.units.mscale,
-            Rstar=config.r_star * richio.units.lscale,
-            beta=1,
-        )
-        x = x + offset[0]
-        y = y + offset[1]
+    x, y, z = bh_frame_positions(snap, config.run, path)
 
     data = getattr(snap, field.name)
     if field.suppress_ambient:

@@ -120,7 +120,8 @@ os.environ.setdefault(
 
 import numpy as np
 import typer
-from dev.datapaths import DATAPATHS, SNAPSHOT_TFB, TDE_PARAMETERS, snapshot_number
+from dev.datapaths import DATAPATHS, SNAPSHOT_TFB, snapshot_number
+from dev.tde import tde_basics
 from loguru import logger
 
 import richio
@@ -137,13 +138,6 @@ REQUESTED_TFBS = {
 K_NEIGHBOURS = 48
 GAMMA = 5 / 3
 MACH_MIN = 1.3
-
-
-def fallback_time_code(run: str) -> float:
-    """Fallback time in RICH code units (G=1)."""
-
-    mbh, mstar, rstar = TDE_PARAMETERS[run]
-    return float(np.pi / np.sqrt(2) * np.sqrt(rstar**3 / mstar) * np.sqrt(mbh / mstar))
 
 
 def selection(
@@ -287,7 +281,7 @@ def main(
     started = time.perf_counter()
     snap = richio.load(snap_path)
     time_code = snapshot_time(snap)
-    time_tfb = time_code / fallback_time_code(run)
+    time_tfb = time_code / tde_basics(run).t_fb.to_value(richio.units.tscale)
 
     candidates = sf.shock_candidates(snap, gamma=gamma)
     logger.info(

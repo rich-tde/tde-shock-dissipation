@@ -101,7 +101,8 @@ os.environ.setdefault(
     ),
 )
 
-import dev
+from dev.tde import bh_frame_positions, tde_basics
+
 import richio
 
 app = typer.Typer(add_completion=False)
@@ -206,9 +207,7 @@ def main(
             "epsilondiss-t-1e4-final.txt"
         )
         NCADENCE = 1
-        Rstar = 0.47 * richio.units.lscale
-        Mstar = 0.5 * richio.units.mscale
-        Mbh = 1e4 * richio.units.mscale
+        run = "1e4"
     elif mode == 2:
         DATADIRS = (
             "/data1/projects/pi-rossiem/TDE_data/YujieSnellius/R0.47M0.5BH100000beta1S60n1.5ComptonHiResNewAMR",
@@ -218,9 +217,7 @@ def main(
             "epsilondiss-t-1e5-final.txt"
         )
         NCADENCE = 1
-        Rstar = 0.47 * richio.units.lscale
-        Mstar = 0.5 * richio.units.mscale
-        Mbh = 1e5 * richio.units.mscale
+        run = "1e5"
     elif mode == 3:
         DATADIRS = (
             "/data1/projects/pi-rossiem/TDE_data/SS24_diag/TEMPTDE",
@@ -232,9 +229,7 @@ def main(
             "epsilondiss-t-1e6-final.txt"
         )
         NCADENCE = 1
-        Rstar = 1 * richio.units.lscale
-        Mstar = 1 * richio.units.mscale
-        Mbh = 1e6 * richio.units.mscale
+        run = "ss24"
     else:
         raise ValueError("Invalid mode. Please choose 1, 2, or 3.")
 
@@ -243,14 +238,7 @@ def main(
     os.makedirs(os.path.dirname(OUTPUT_FILE) or ".", exist_ok=True)
     NCADENCE = stride
 
-    r_amin = Rstar * (Mbh / Mstar) ** (2 / 3)
-    r_p = Rstar * (Mbh / Mstar) ** (1 / 3)
-    tmin = (
-        np.pi
-        / np.sqrt(2)
-        * (Rstar**3 / u.G / Mstar) ** (1 / 2)
-        * (Mbh / Mstar) ** (1 / 2)
-    )
+    tde = tde_basics(run)
 
     (
         snapnums,
@@ -305,27 +293,13 @@ def main(
                 t = snap.t[0]
             except IndexError:
                 t = snap.t
-            tfb = t / tmin
+            tfb = t / tde.t_fb
             if t < 0:
-                r_a = r_p
+                r_a = tde.r_p
             else:
-                r_a = r_amin * tfb ** (2 / 3)
+                r_a = tde.r_a * tfb ** (2 / 3)
 
-            if mode == 3:
-                needs_switch = os.path.basename(dir) == "TEMPTDE"
-            else:
-                needs_switch = bool(
-                    re.fullmatch(r"snap_\d+\.h5", os.path.basename(snap_file))
-                )
-
-            if needs_switch:
-                x0 = dev.reference_frame_offset(
-                    t=t, Mbh=Mbh, Mstar=Mstar, Rstar=Rstar, beta=1
-                )
-                X = snap.X + x0[0]
-                Y = snap.Y + x0[1]
-            else:
-                X, Y = snap.X, snap.Y
+            X, Y, _ = bh_frame_positions(snap, run, snap_file)
 
             shock_cuts = (
                 X > 0,

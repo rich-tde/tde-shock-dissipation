@@ -93,17 +93,18 @@ os.environ.setdefault(
 REPO = "/home/hey4/rich_tde"
 sys.path.insert(0, os.path.join(REPO, "dev"))
 
-import dev  # noqa: E402, F401 -- applies the repository plotting style
+import dev  # noqa: F401 -- applies the repository plotting style
 
 # Apply the repository plotting style before importing pyplot.
 # isort: split
 
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import typer  # noqa: E402
-from dev.datapaths import TDE_PARAMETERS  # noqa: E402
-from richio.plots import scalar_map  # noqa: E402
-from scipy.integrate import solve_ivp  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+import typer
+from dev.datapaths import TDE_PARAMETERS
+from richio.plots import scalar_map
+
+from dev import tde
 
 DEFAULT_CASES = ("1e4:77", "1e5:161", "1e6:877")
 CACHE_ROOT = os.path.join(REPO, "data/processed/NozzleZoomSlices")
@@ -112,45 +113,16 @@ XY_WINDOW_RP = (-1.0, 2.0, -1.5, 1.5)
 OUTPUT = os.path.join(REPO, "data/processed/PresentationNozzleSlices/pw-orbit-test.png")
 
 
-def pw_acceleration(_, state, mass, schwarzschild_radius):
-    x, y, vx, vy = state
-    radius = np.hypot(x, y)
-    factor = -mass / (radius * (radius - schwarzschild_radius) ** 2)
-    return vx, vy, factor * x, factor * y
-
-
 def returning_orbit(run, time_tfb):
-    mass, stellar_mass, stellar_radius = TDE_PARAMETERS[run]
-    pericenter = stellar_radius * (mass / stellar_mass) ** (1 / 3)
-    schwarzschild_radius = 4.21 * mass / 1e6
-    energy_spread = stellar_mass * (mass / stellar_mass) ** (1 / 3) / stellar_radius
-    binding_energy = -energy_spread * time_tfb ** (-2 / 3)
-    pericenter_speed = np.sqrt(
-        2 * (mass / (pericenter - schwarzschild_radius) + binding_energy)
-    )
-    newtonian_period = 2 * np.pi * mass / (-2 * binding_energy) ** 1.5
-
-    solution = solve_ivp(
-        pw_acceleration,
-        (0.0, 1.6 * newtonian_period),
-        (pericenter, 0.0, 0.0, -pericenter_speed),
-        args=(mass, schwarzschild_radius),
-        rtol=1e-9,
-        atol=1e-11,
-        dense_output=True,
-        max_step=newtonian_period / 5000,
-    )
-    sample_time = np.linspace(0.0, solution.t[-1], 50000)
-    x, y = solution.sol(sample_time)[:2]
+    pericenter = tde.tde_basics(run).r_p
+    x, y, next_pericenter = tde.returning_orbit(run, time_tfb)
     radius = np.hypot(x, y)
-    minima = np.where((radius[1:-1] < radius[:-2]) & (radius[1:-1] < radius[2:]))[0] + 1
-    next_pericenter = minima[minima > 0.5 * len(radius)][0]
 
     near = radius < 2.3 * pericenter
     before = np.where(~near[:next_pericenter])[0][-1] + 1
     after = next_pericenter + np.where(~near[next_pericenter:])[0][0]
-    x = x[before:after] / pericenter
-    y = y[before:after] / pericenter
+    x = (x[before:after] / pericenter).to_value("dimensionless")
+    y = (y[before:after] / pericenter).to_value("dimensionless")
     phi = np.unwrap(np.arctan2(y, x))
     phi -= phi[np.argmin(np.hypot(x, y))]
     return x, y, phi

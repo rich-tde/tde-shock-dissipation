@@ -204,6 +204,7 @@ import numpy as np
 import typer
 import unyt as u
 from dev.datapaths import TDE_PARAMETERS
+from dev.tde import bh_frame_positions, tde_basics
 from loguru import logger
 from richio.plots import scalar_map
 from scipy import ndimage
@@ -240,12 +241,7 @@ class RunConfig:
 
     @property
     def t_fb_code(self) -> float:
-        return (
-            math.pi
-            / math.sqrt(2.0)
-            * math.sqrt(self.r_star**3 / self.m_star)
-            * math.sqrt(self.m_bh / self.m_star)
-        )
+        return tde_basics(self.run).t_fb.to_value(richio.units.tscale)
 
 
 RUNS = {
@@ -273,30 +269,10 @@ def selected_snapshots(run: str) -> list[tuple[int, str, bool]]:
     ]
 
 
-def needs_reference_frame(run: str, path: str) -> bool:
-    if run == "1e6":
-        return os.path.basename(os.path.dirname(path)) == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
-
-
 def scalar_time(snapshot):
     time = snapshot.time
     value = float(np.asarray(time.to_value("code_time")).squeeze())
     return u.unyt_quantity(value, "code_time", registry=time.units.registry)
-
-
-def bh_frame_coordinates(snapshot, config: RunConfig, path: str):
-    x, y, z = snapshot.X, snapshot.Y, snapshot.Z
-    if needs_reference_frame(config.run, path):
-        offset = dev.reference_frame_offset(
-            t=scalar_time(snapshot),
-            Mbh=config.m_bh * richio.units.mscale,
-            Mstar=config.m_star * richio.units.mscale,
-            Rstar=config.r_star * richio.units.lscale,
-            beta=1,
-        )
-        x, y = x + offset[0], y + offset[1]
-    return x, y, z
 
 
 def cache_complete(path: str, resolution: int) -> bool:
@@ -331,7 +307,7 @@ def build_column_cache(
 
     snapshot = richio.load(str(snapshot_path))
     time = scalar_time(snapshot)
-    x, y, z = bh_frame_coordinates(snapshot, config, snapshot_path)
+    x, y, z = bh_frame_positions(snapshot, config.run, snapshot_path)
     r_p = config.r_p_code * richio.units.lscale
     radius = np.sqrt(x**2 + y**2 + z**2)
     source_selection = np.asarray(radius < APERTURE_RP * r_p, dtype=bool)

@@ -2,10 +2,9 @@ r"""Compute the total orbital, kinetic, gravitational, gas and radiation energie
 
 Sum energies over all cells without a boundness or stellar-tracer cut. Positions
 and velocities are corrected to the BH frame when needed. ``EORB=EKIN+EGRAV``;
-``ERAD=sum(Erad*mass)`` and ``EINT=sum(sie*mass)``. The historical quadratic
-potential inside ``0.6*r_p`` differs from the continuously matched potential
-in ``SS24-circularization-t.py``. Their energy zero points and bound masks
-must not be interchanged.
+``ERAD=sum(Erad*mass)`` and ``EINT=sum(sie*mass)``. The potential is
+``-G*Mbh/(r - 2GMbh/c**2)``, continuously matched to a harmonic core inside
+``dev.tde.softening_radius`` (0.5 r_p for 1e6, 0.6 r_p otherwise).
 
 Input files
 -----------
@@ -120,6 +119,8 @@ os.environ.setdefault(
     ),
 )
 
+import dev.tde
+
 import dev
 import richio
 
@@ -153,35 +154,26 @@ def main(
     if end_snapshot < start_snapshot:
         raise typer.BadParameter("--end-snapshot must be at least --start-snapshot")
     if mode == 1:
-        # 1e4
+        run = "1e4"
         data_directories = (
             "/data1/projects/pi-rossiem/TDE_data/NewSnellius/R0.47M0.5BH10000beta1S60ComptonHiRes",
         )
         output_file = "/home/hey4/rich_tde/data/processed/SimpleTimeseries/E-t-1e4.txt"
         cadence = 1
-        stellar_radius = 0.47 * richio.units.lscale
-        stellar_mass = 0.5 * richio.units.mscale
-        black_hole_mass = 1e4 * richio.units.mscale
     elif mode == 2:
-        # 1e5
+        run = "1e5"
         data_directories = (
             "/data1/projects/pi-rossiem/TDE_data/YujieSnellius/R0.47M0.5BH100000beta1S60n1.5ComptonHiResNewAMR",
         )
         output_file = "/home/hey4/rich_tde/data/processed/SimpleTimeseries/E-t-1e5.txt"
         cadence = 1
-        stellar_radius = 0.47 * richio.units.lscale
-        stellar_mass = 0.5 * richio.units.mscale
-        black_hole_mass = 1e5 * richio.units.mscale
     elif mode == 3:
-        # 1e6
+        run = "1e6"
         data_directories = (
             "/data1/projects/pi-rossiem/TDE_data/R0.47M0.5BH1e+06beta1S50n1.5ComptonMG",
         )
         output_file = "/home/hey4/rich_tde/data/processed/SimpleTimeseries/E-t-1e6.txt"
         cadence = 1
-        stellar_radius = 0.47 * richio.units.lscale
-        stellar_mass = 0.5 * richio.units.mscale
-        black_hole_mass = 1e6 * richio.units.mscale
     else:
         raise ValueError("Invalid mode. Please choose 1, 2, or 3.")
 
@@ -192,13 +184,8 @@ def main(
     os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
     cadence = stride
 
-    tmin = (
-        np.pi
-        / np.sqrt(2)
-        * (stellar_radius**3 / u.G / stellar_mass) ** (1 / 2)
-        * (black_hole_mass / stellar_mass) ** (1 / 2)
-    )
-    pericenter_radius = stellar_radius * (black_hole_mass / stellar_mass) ** (1 / 3)
+    tde = dev.tde.tde_basics(run)
+    softening_radius = dev.tde.softening_radius(run)
 
     snapnums = []
     times = []
@@ -220,14 +207,19 @@ def main(
         gravitational_energies,
         kinetic_energies,
     ]
-    if (
-        not overwrite
-        and os.path.exists(output_file)
-        and os.path.getsize(output_file)
-    ):
+    if not overwrite and os.path.exists(output_file) and os.path.getsize(output_file):
         with open(output_file) as handle:
             header = handle.readline().lstrip("# ").split()
-        if header != "SNAPNUM TIME TFALLBACK EORB ERAD EINT EGRAV EKIN".split():
+        if header != [
+            "SNAPNUM",
+            "TIME",
+            "TFALLBACK",
+            "EORB",
+            "ERAD",
+            "EINT",
+            "EGRAV",
+            "EKIN",
+        ]:
             raise ValueError("Existing output has a different time-series schema")
         raw = np.loadtxt(output_file, ndmin=2)
         if raw.shape[1] != 8:
@@ -284,59 +276,37 @@ def main(
                 continue
 
             snap = richio.load(snap_file)
-            x, y, z, t = dev.positions_and_time(snap)
-            tfb = t / tmin
-
-            if os.path.basename(data_directory).startswith("TEMPTDE"):
-                needs_switch = os.path.basename(data_directory) == "TEMPTDE"
-            else:
-                needs_switch = bool(
-                    re.fullmatch(r"snap_\d+\.h5", os.path.basename(snap_file))
-                )
-
-            if needs_switch:
-                frame_offset = dev.reference_frame_offset(
-                    t=t,
-                    Mbh=black_hole_mass,
-                    Mstar=stellar_mass,
-                    Rstar=stellar_radius,
-                    beta=1,
-                )
-                x = x + frame_offset[0]
-                y = y + frame_offset[1]
-                velocity_x = snap.vx + frame_offset[2]
-                velocity_y = snap.vy + frame_offset[3]
-            else:
-                velocity_x = snap.vx
-                velocity_y = snap.vy
-            velocity_z = snap.vz
+            t = dev.snapshot_time(snap)
+            tfb = t / tde.t_fb
+            x, y, z = dev.tde.bh_frame_positions(snap, run, snap_file)
+            velocity_x, velocity_y, velocity_z = dev.tde.bh_frame_velocities(
+                snap, run, snap_file
+            )
 
             radius = np.sqrt(x**2 + y**2 + z**2)
 
-            gravitational_radius = u.G * black_hole_mass / u.c**2
+            gravitational_radius = u.G * tde.Mbh / u.c**2
 
             speed_squared = velocity_x**2 + velocity_y**2 + velocity_z**2
             density = snap.density
             volume = snap.volume
 
-            softening_radius = 0.6 * pericenter_radius
             # smoothed PW
             cell_gravitational_energy = np.where(
                 radius > softening_radius,
+                -u.G * tde.Mbh * density * volume / (radius - 2 * gravitational_radius),
                 -u.G
-                * black_hole_mass
+                * tde.Mbh
                 * density
                 * volume
-                / (radius - 2 * gravitational_radius),
-                -u.G
-                * black_hole_mass
-                * density
-                * volume
-                * radius**2
-                / (
-                    2
-                    * softening_radius
-                    * (softening_radius - 2 * gravitational_radius) ** 2
+                * (
+                    1 / (softening_radius - 2 * gravitational_radius)
+                    - (radius**2 - softening_radius**2)
+                    / (
+                        2
+                        * softening_radius
+                        * (softening_radius - 2 * gravitational_radius) ** 2
+                    )
                 ),
             )
             cell_kinetic_energy = 1 / 2 * speed_squared * density * volume

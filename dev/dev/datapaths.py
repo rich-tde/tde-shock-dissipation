@@ -2,7 +2,6 @@
 
 from functools import cache
 import glob
-from math import pi, sqrt
 import os
 import re
 import warnings
@@ -33,7 +32,7 @@ DATADIRS = {
 }
 NPY_RUNS = ("1e4lowres", "1e4streamhires", "1e4streamhires2")
 
-# Mbh, Mstar, and Rstar in code units.  RICH uses G = 1.
+# Mbh, Mstar, and Rstar in code units.
 TDE_PARAMETERS = {
     "1e4": (1e4, 0.5, 0.47),
     "1e4midres": (1e4, 0.5, 0.47),
@@ -112,8 +111,11 @@ def SNAPSHOT_TFB(run, tfb, warn_if=0.05):
     if len(requested_tfbs) == 0:
         return []
 
-    Mbh, Mstar, Rstar = TDE_PARAMETERS[run]
-    fallback_time = pi / sqrt(2) * sqrt(Rstar**3 / Mstar) * sqrt(Mbh / Mstar)
+    import richio
+
+    from dev.tde import tde_basics
+
+    fallback_time = tde_basics(run).t_fb.to_value(richio.units.tscale)
 
     _, paths, times = _snapshot_times(run)
     snapshot_tfbs = times / fallback_time

@@ -86,16 +86,16 @@ Loading example
     plt.pcolormesh(orbit["s_rsun"], orbit["z_rsun"], orbit["density"].T)
 """
 
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 
-from dev.datapaths import TDE_PARAMETERS
-from dev.io import cache_matches, load_npz, save_npz_atomic
-from dev.plotting import positive_log10
-from dev.tde import bh_frame_positions, pericenter, returning_orbit_window
 import numpy as np
 import typer
 import unyt as u
+from dev.datapaths import TDE_PARAMETERS
+from dev.io import cache_matches, load_npz, save_npz_atomic
+from dev.plotting import positive_log10
+from dev.tde import bh_frame_positions, returning_orbit_window, tde_basics
 
 import richio
 
@@ -114,7 +114,7 @@ CASES = (("1e4", 77), ("1e5", 142), ("1e5", 161), ("ss24", 850))
 NOZZLE_CASES = {("1e4", 77), ("1e5", 161), ("ss24", 850)}
 NOZZLE_RESOLUTION = (768, 768)
 NOZZLE_XY_WINDOW_RP = (-1.0, 2.0, -1.5, 1.5)
-REFERENCE_RP = pericenter("1e4")
+REFERENCE_RP = tde_basics("1e4").r_p.to_value(CODE_LENGTH)
 NOZZLE_YZ_SLICE_X = 13.0
 NOZZLE_YZ_HALF_WIDTH_RP = 10.0 / REFERENCE_RP
 NOZZLE_YZ_HALF_HEIGHT_RP = 5.0 / REFERENCE_RP
@@ -193,7 +193,7 @@ class Case:
 
     @property
     def r_p(self):
-        return pericenter(self.run) * CODE_LENGTH
+        return tde_basics(self.run).r_p
 
     @property
     def mach_p(self):
@@ -223,7 +223,9 @@ def sample_fields(snap, indices):
         snap.sie[indices],
         snap.vz[indices],
     )
-    sound_speed = np.sqrt((1 + pressure / (density * internal_energy)) * pressure / density)
+    sound_speed = np.sqrt(
+        (1 + pressure / (density * internal_energy)) * pressure / density
+    )
     return {
         "density": positive_log10(density.in_cgs()),
         "pressure": positive_log10(pressure.in_cgs()),
@@ -238,7 +240,9 @@ def sample_fields(snap, indices):
 
 def nozzle_xy_slice(case):
     xmin, xmax, ymin, ymax = np.multiply(NOZZLE_XY_WINDOW_RP, case.r_p)
-    indices, x, y = case.grid("xy", (xmin, ymin, xmax, ymax), 0 * CODE_LENGTH, NOZZLE_RESOLUTION)
+    indices, x, y = case.grid(
+        "xy", (xmin, ymin, xmax, ymax), 0 * CODE_LENGTH, NOZZLE_RESOLUTION
+    )
     return indices, {
         "x_rp": (x / case.r_p).to_value("dimensionless"),
         "y_rp": (y / case.r_p).to_value("dimensionless"),
@@ -266,14 +270,16 @@ def orbit_section(case, box_scale, center_shift):
         NOZZLE_RESOLUTION[0],
         NOZZLE_ORBIT_RADIUS_SCALE[run],
         NOZZLE_ORBIT_PHASE_DEG[run],
-        center_shift,
+        center_shift * CODE_LENGTH,
     )
-    height = box_scale * NOZZLE_YZ_HALF_HEIGHT_RP * pericenter(run)
+    height = box_scale * NOZZLE_YZ_HALF_HEIGHT_RP * case.r_p.to_value(CODE_LENGTH)
     z_axis = np.linspace(-height, height, NOZZLE_RESOLUTION[1], endpoint=False)
     orbit_x, orbit_y = x_rp * case.r_p, y_rp * case.r_p
 
     points = np.stack(
-        np.broadcast_arrays(orbit_x.value[:, None], orbit_y.value[:, None], z_axis[None, :]),
+        np.broadcast_arrays(
+            orbit_x.value[:, None], orbit_y.value[:, None], z_axis[None, :]
+        ),
         axis=-1,
     )
     padding = 0.1 * case.r_p
@@ -286,17 +292,23 @@ def orbit_section(case, box_scale, center_shift):
         & (case.z < (z_axis[-1] * CODE_LENGTH + padding))
     )
     indices = case.snap.nearest_indices(
-        points * CODE_LENGTH, X=case.x, Y=case.y, Z=case.z, selection=nearby, workers=case.workers
+        points * CODE_LENGTH,
+        X=case.x,
+        Y=case.y,
+        Z=case.z,
+        selection=nearby,
+        workers=case.workers,
     )
 
     dx_dphi, dy_dphi = np.gradient(orbit_x, phi), np.gradient(orbit_y, phi)
     ds_dphi = np.hypot(dx_dphi, dy_dphi)
     along_orbit = (
-        case.snap.vx[indices] * dx_dphi[:, None] + case.snap.vy[indices] * dy_dphi[:, None]
+        case.snap.vx[indices] * dx_dphi[:, None]
+        + case.snap.vy[indices] * dy_dphi[:, None]
     ) / ds_dphi[:, None]
     geometry = {
         "phi": phi,
-        "s_rsun": s,
+        "s_rsun": s.to_value(CODE_LENGTH),
         "z_rsun": z_axis,
         "x_rp": x_rp,
         "y_rp": y_rp,
@@ -324,7 +336,7 @@ def build_geometry(case):
         "run": case.run,
         "snapnum": case.snapnum,
         "time_tfb": case.result["time_tfb"],
-        "r_p_rsun": pericenter(case.run),
+        "r_p_rsun": case.r_p.to_value(CODE_LENGTH),
         "x_rsun": case.x[surface].to_value("Rsun"),
         "y_rsun": case.y[surface].to_value("Rsun"),
         "z_rsun": case.z[surface].to_value("Rsun"),
@@ -345,7 +357,10 @@ def build_self(case):
         "half_width_rp": np.asarray(window["half_width"]),
         "self_intersection_present": window["self_intersection_present"],
         **axes,
-        **{name: fields[name] for name in ("density", "dissipation", "vx_kms", "vy_kms")},
+        **{
+            name: fields[name]
+            for name in ("density", "dissipation", "vx_kms", "vy_kms")
+        },
     }
 
 
@@ -369,7 +384,9 @@ def build_nozzle(case):
         "snapnum": case.snapnum,
         "time_tfb": case.result["time_tfb"],
         "resolution": np.asarray(NOZZLE_RESOLUTION),
-        **prefixed("nozzle_xy_", xy_axes | {name: xy_fields[name] for name in xy_names}),
+        **prefixed(
+            "nozzle_xy_", xy_axes | {name: xy_fields[name] for name in xy_names}
+        ),
         **prefixed(
             "nozzle_orbit_",
             orbit
@@ -388,7 +405,9 @@ def build_self_mach_max(case):
     center, half_width = np.asarray(window["center"]), np.asarray(window["half_width"])
     centres, edges = zip(
         *(
-            bin_centres_and_edges(center[axis], half_width[axis], SELF_MACH_MAX_RESOLUTION[axis])
+            bin_centres_and_edges(
+                center[axis], half_width[axis], SELF_MACH_MAX_RESOLUTION[axis]
+            )
             for axis in (0, 1)
         )
     )
@@ -397,7 +416,9 @@ def build_self_mach_max(case):
     mach = case.result["mach_P"]
     surface_x = (case.x[surface] / case.r_p).to_value("dimensionless")
     surface_y = (case.y[surface] / case.r_p).to_value("dimensionless")
-    in_slab = np.abs(case.z[surface] - center[2] * case.r_p) < case.snap.volume[surface] ** (1 / 3)
+    in_slab = np.abs(case.z[surface] - center[2] * case.r_p) < case.snap.volume[
+        surface
+    ] ** (1 / 3)
     selected = (
         in_slab
         & np.isfinite(surface_x)
@@ -435,9 +456,13 @@ def build_self_mach_max(case):
 
 
 def bin_centres_and_edges(center, half_width, count):
-    centres = np.linspace(center - half_width, center + half_width, count, endpoint=False)
+    centres = np.linspace(
+        center - half_width, center + half_width, count, endpoint=False
+    )
     step = centres[1] - centres[0]
-    return centres, np.linspace(centres[0] - step / 2, centres[-1] + step / 2, count + 1)
+    return centres, np.linspace(
+        centres[0] - step / 2, centres[-1] + step / 2, count + 1
+    )
 
 
 def build_mach(case):
@@ -504,12 +529,19 @@ def is_current(product, path, run, snapnum):
         )
     if product == "self-mach-max":
         return cache_matches(
-            path, keys=("mach_P_max",), resolution=SELF_MACH_MAX_RESOLUTION, mach_min=SELF_MACH_MIN
+            path,
+            keys=("mach_P_max",),
+            resolution=SELF_MACH_MAX_RESOLUTION,
+            mach_min=SELF_MACH_MIN,
         )
     if product == "mach":
         keys = ["nozzle_orbit_mach_P", "nozzle_orbit_pressure"] * nozzle
         keys += ["self_mach_P"] * ((run, snapnum) in SELF_WINDOWS)
-        expected = {"nozzle_orbit_radius_scale": NOZZLE_ORBIT_RADIUS_SCALE[run]} if nozzle else {}
+        expected = (
+            {"nozzle_orbit_radius_scale": NOZZLE_ORBIT_RADIUS_SCALE[run]}
+            if nozzle
+            else {}
+        )
         return cache_matches(path, keys=keys, **expected)
     return cache_matches(path)
 
@@ -531,7 +563,9 @@ def choose_case(task_index, run, snapnum):
             raise typer.BadParameter("Choose --task-index or --run/--snapnum.")
         return CASES[task_index]
     if run not in TDE_PARAMETERS or snapnum is None:
-        raise typer.BadParameter("Choose --task-index, or --run {1e4,1e5,ss24} --snapnum N.")
+        raise typer.BadParameter(
+            "Choose --task-index, or --run {1e4,1e5,ss24} --snapnum N."
+        )
     return run, snapnum
 
 
@@ -561,13 +595,16 @@ def main(
         None, help="Geometry input root; default RESULT_ROOT/analysis/per-cell."
     ),
     self_center: tuple[float, float, float] | None = typer.Option(
-        None, help="Self-intersection box centre X Y Z in r_p; pair with --self-half-width."
+        None,
+        help="Self-intersection box centre X Y Z in r_p; pair with --self-half-width.",
     ),
     self_half_width: tuple[float, float, float] | None = typer.Option(
         None, help="Box half widths X Y Z in r_p."
     ),
     workers: int = typer.Option(
-        int(os.environ.get("SLURM_CPUS_PER_TASK", "1")), min=1, help="KD-tree query workers."
+        int(os.environ.get("SLURM_CPUS_PER_TASK", "1")),
+        min=1,
+        help="KD-tree query workers.",
     ),
     overwrite: bool = typer.Option(
         False, help="Rebuild caches even if they match the current settings."
@@ -588,7 +625,9 @@ def main(
     if (self_center is None) != (self_half_width is None):
         raise typer.BadParameter("Supply both --self-center and --self-half-width.")
     if self_center is not None:
-        present = SELF_WINDOWS.get((run, snapnum), {}).get("self_intersection_present", np.nan)
+        present = SELF_WINDOWS.get((run, snapnum), {}).get(
+            "self_intersection_present", np.nan
+        )
         SELF_WINDOWS[(run, snapnum)] = {
             "center": self_center,
             "half_width": self_half_width,
@@ -598,18 +637,24 @@ def main(
         raise typer.BadParameter(f"Unknown products: {', '.join(sorted(unknown))}")
     if product and "nozzle" in product:
         NOZZLE_CASES.add((run, snapnum))
-    if missing := [name for name in product or () if not applicable(name, run, snapnum)]:
+    if missing := [
+        name for name in product or () if not applicable(name, run, snapnum)
+    ]:
         raise typer.BadParameter(
             f"No configured geometry for {', '.join(missing)}; supply a box or --product nozzle."
         )
 
     products = [name for name in product or PRODUCTS if applicable(name, run, snapnum)]
     paths = {
-        name: os.path.join(output_root, CACHE_NAMES[name].format(run=run, snapnum=snapnum))
+        name: os.path.join(
+            output_root, CACHE_NAMES[name].format(run=run, snapnum=snapnum)
+        )
         for name in products
     }
     result_path = os.path.join(result_root, run, f"shockfinder_snap_{snapnum:04d}.npz")
-    per_cell_path = os.path.join(per_cell_root, f"{run}_shock_dissipation_snap_{snapnum:04d}.npz")
+    per_cell_path = os.path.join(
+        per_cell_root, f"{run}_shock_dissipation_snap_{snapnum:04d}.npz"
+    )
     print(f"Shock-finder input: {result_path}")
     for name, path in paths.items():
         print(f"{name}: {path}")

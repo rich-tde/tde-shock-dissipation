@@ -82,17 +82,17 @@ Loading example
 """
 
 import argparse
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 import csv
-from dataclasses import dataclass
 import json
 import os
 import shutil
 import time
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from dataclasses import dataclass
 
 import h5py
-from numba import njit
 import numpy as np
+from numba import njit
 
 FIELDS = (
     "Density",
@@ -106,9 +106,18 @@ FIELDS = (
     "Pressure",
     "InternalEnergy",
 )
-DENSITY, TEMPERATURE, DISSIPATION, STAR, WAS_REMOVED, X, Y, Z, PRESSURE, INTERNAL_ENERGY = range(
-    len(FIELDS)
-)
+(
+    DENSITY,
+    TEMPERATURE,
+    DISSIPATION,
+    STAR,
+    WAS_REMOVED,
+    X,
+    Y,
+    Z,
+    PRESSURE,
+    INTERNAL_ENERGY,
+) = range(len(FIELDS))
 FILTER_DEFINITIONS = {
     "physical": "Density, Temperature, Pressure and InternalEnergy finite and positive; "
     "Dissipation finite",
@@ -154,7 +163,9 @@ def _read_rank(job):
     if isinstance(targets, tuple):
         targets = np.memmap(targets[0], mode="r", dtype=np.uint64, shape=targets[1])
     if targets is None:
-        return ids, np.column_stack([group[field][()] for field in fields]) if fields else None
+        return ids, np.column_stack(
+            [group[field][()] for field in fields]
+        ) if fields else None
     rows = np.flatnonzero((ids >= targets[0]) & (ids <= targets[-1]))
     rows = rows[targets[np.searchsorted(targets, ids[rows])] == ids[rows]]
     if not len(rows):
@@ -209,7 +220,12 @@ def snapshot_ids(path, ranks, executor, workers):
     """Sorted IDs of every cell in a snapshot."""
     ids = np.sort(
         np.concatenate(
-            [rank_ids for _, (rank_ids, _) in read_ranks(path, ranks, None, executor, workers, ())]
+            [
+                rank_ids
+                for _, (rank_ids, _) in read_ranks(
+                    path, ranks, None, executor, workers, ()
+                )
+            ]
         )
     )
     if np.any(ids[1:] == ids[:-1]):
@@ -231,7 +247,9 @@ def sample_filters(values, min_star, max_was_removed, max_temperature):
 
 
 def valid_samples(values, args):
-    filters = sample_filters(values, args.min_star, args.max_was_removed, args.max_temperature)
+    filters = sample_filters(
+        values, args.min_star, args.max_was_removed, args.max_temperature
+    )
     return np.logical_and.reduce(list(filters.values()))
 
 
@@ -289,13 +307,21 @@ def start_run(args, catalogue, outputs, ids=None):
     if os.path.exists(target) and not args.overwrite:
         with open(target) as stream:
             previous = json.load(stream)
-        complete = previous.get("settings") == settings and previous.get("status") == "complete"
+        complete = (
+            previous.get("settings") == settings
+            and previous.get("status") == "complete"
+        )
         if complete and all(
             os.path.exists(os.path.join(args.output_dir, name)) for name in outputs
         ):
-            print(f"Matching completed results exist in {args.output_dir}; skipping", flush=True)
+            print(
+                f"Matching completed results exist in {args.output_dir}; skipping",
+                flush=True,
+            )
             return None
-        raise FileExistsError(f"Existing/incomplete results differ; use --overwrite: {target}")
+        raise FileExistsError(
+            f"Existing/incomplete results differ; use --overwrite: {target}"
+        )
     os.makedirs(args.output_dir, exist_ok=True)
     metadata = {
         "schema_version": 1,
@@ -362,8 +388,12 @@ def presence_intervals(args, catalogue, duration, executor, metadata):
     for index, path in enumerate(catalogue.paths):
         tick = time.monotonic()
         ids = snapshot_ids(path, catalogue.ranks[index], executor, args.workers)
-        new_starts, dead = _advance_presence(old_ids, starts, ids, index, times, duration)
-        found.append((old_ids[dead], starts[dead], np.full(len(dead), index - 1, dtype=np.int32)))
+        new_starts, dead = _advance_presence(
+            old_ids, starts, ids, index, times, duration
+        )
+        found.append(
+            (old_ids[dead], starts[dead], np.full(len(dead), index - 1, dtype=np.int32))
+        )
         finished_count += len(dead)
         old_ids, starts = ids, new_starts
         log_progress(
@@ -377,14 +407,20 @@ def presence_intervals(args, catalogue, duration, executor, metadata):
         )
     alive = np.flatnonzero(times[-1] - times[starts] >= duration)
     found.append(
-        (old_ids[alive], starts[alive], np.full(len(alive), len(times) - 1, dtype=np.int32))
+        (
+            old_ids[alive],
+            starts[alive],
+            np.full(len(alive), len(times) - 1, dtype=np.int32),
+        )
     )
     ids, first, last = (np.concatenate(column) for column in zip(*found))
     order = np.lexsort((first, ids))
     return ids[order], first[order], last[order]
 
 
-def store_valid_samples(args, catalogue, candidates, duration, stored, executor, metadata):
+def store_valid_samples(
+    args, catalogue, candidates, duration, stored, executor, metadata
+):
     """Store the valid samples of each candidate and split candidates at invalid ones.
 
     Returns ``(candidate, first, last)`` rows of every valid run lasting ``duration``.
@@ -402,13 +438,19 @@ def store_valid_samples(args, catalogue, candidates, duration, stored, executor,
         seen = np.zeros(len(ids), dtype=bool)
         if len(active):
             for _, (found_ids, found_values) in read_ranks(
-                path, catalogue.ranks[index], (targets_path, len(targets)), executor, args.workers
+                path,
+                catalogue.ranks[index],
+                (targets_path, len(targets)),
+                executor,
+                args.workers,
             ):
                 columns = active[np.searchsorted(targets, found_ids)]
                 seen[columns] = True
                 values[columns] = found_values
         good = seen & valid_samples(values, args)
-        finished.append(_advance_valid(valid_starts, good, index, catalogue.times, duration))
+        finished.append(
+            _advance_valid(valid_starts, good, index, catalogue.times, duration)
+        )
         values[~good] = np.nan
         for chunk in np.unique(np.flatnonzero(good) // 1024):
             begin = int(chunk) * 1024
@@ -424,13 +466,17 @@ def store_valid_samples(args, catalogue, candidates, duration, stored, executor,
         )
     no_more = np.zeros(len(ids), dtype=bool)
     finished.append(
-        _advance_valid(valid_starts, no_more, len(catalogue.paths), catalogue.times, duration)
+        _advance_valid(
+            valid_starts, no_more, len(catalogue.paths), catalogue.times, duration
+        )
     )
     os.remove(targets_path)
     return np.concatenate(finished)
 
 
-def write_census_archive(path, stored, ids, intervals, catalogue, tfb, min_duration_tfb):
+def write_census_archive(
+    path, stored, ids, intervals, catalogue, tfb, min_duration_tfb
+):
     """Copy each interval's samples into one contiguous, compressed HDF5 archive."""
     intervals = intervals[np.lexsort((intervals[:, 1], intervals[:, 0]))]
     offsets = np.r_[0, np.cumsum(intervals[:, 2] - intervals[:, 1] + 1, dtype=np.int64)]
@@ -454,8 +500,12 @@ def write_census_archive(path, stored, ids, intervals, catalogue, tfb, min_durat
         target["time_code"] = catalogue.times
         target["fields"] = np.asarray(FIELDS, dtype="S")
         chunks = {"chunks": (min(total, 4096), len(FIELDS))} if total else {}
-        data = target.create_dataset("values", (total, len(FIELDS)), "f8", **chunks, **compressed)
-        sample_index = target.create_dataset("snapshot_index", (total,), "i4", **compressed)
+        data = target.create_dataset(
+            "values", (total, len(FIELDS)), "f8", **chunks, **compressed
+        )
+        sample_index = target.create_dataset(
+            "snapshot_index", (total,), "i4", **compressed
+        )
         begin = 0
         while begin < len(intervals):
             first_column = int(intervals[begin, 0])
@@ -463,7 +513,10 @@ def write_census_archive(path, stored, ids, intervals, catalogue, tfb, min_durat
             block = stored[:, first_column : int(intervals[end - 1, 0]) + 1, :]
             rows = intervals[begin:end]
             data[offsets[begin] : offsets[end]] = np.concatenate(
-                [block[start : stop + 1, column - first_column] for column, start, stop in rows]
+                [
+                    block[start : stop + 1, column - first_column]
+                    for column, start, stop in rows
+                ]
             )
             sample_index[offsets[begin] : offsets[end]] = np.concatenate(
                 [np.arange(start, stop + 1, dtype=np.int32) for _, start, stop in rows]
@@ -472,17 +525,27 @@ def write_census_archive(path, stored, ids, intervals, catalogue, tfb, min_durat
     return intervals, offsets
 
 
-def build_census_archive(args, catalogue, candidates, duration, tfb, executor, metadata):
+def build_census_archive(
+    args, catalogue, candidates, duration, tfb, executor, metadata
+):
     """Write ``histories.h5`` from the candidates, through a temporary per-snapshot work file."""
     ids = candidates[0]
     work_path = os.path.join(args.output_dir, ".census-candidates.h5.tmp")
     archive_path = os.path.join(args.output_dir, "histories.h5.tmp")
     shape = (len(catalogue.paths), len(ids), len(FIELDS))
-    storage = {"chunks": (1, min(1024, len(ids)), len(FIELDS)), "fillvalue": np.nan, **GZIP}
+    storage = {
+        "chunks": (1, min(1024, len(ids)), len(FIELDS)),
+        "fillvalue": np.nan,
+        **GZIP,
+    }
     with h5py.File(work_path, "w") as work:
-        stored = work.create_dataset("values", shape, "f8", **(storage if len(ids) else {}))
+        stored = work.create_dataset(
+            "values", shape, "f8", **(storage if len(ids) else {})
+        )
         intervals = (
-            store_valid_samples(args, catalogue, candidates, duration, stored, executor, metadata)
+            store_valid_samples(
+                args, catalogue, candidates, duration, stored, executor, metadata
+            )
             if len(ids)
             else np.empty((0, 3), dtype=np.int64)
         )
@@ -496,12 +559,14 @@ def build_census_archive(args, catalogue, candidates, duration, tfb, executor, m
 
 def census(args, executor):
     """Archive every sufficiently long valid stellar interval, without ranking."""
-    from dev.tde import fallback_time
+    from dev.tde import tde_basics
+
+    import richio
 
     catalogue = make_catalogue(args)
     if args.snapshot_step != 1 or np.any(np.diff(catalogue.snapshots) != 1):
         raise ValueError("Census requires every consecutive snapshot, with no gaps")
-    tfb = fallback_time(args.run)
+    tfb = tde_basics(args.run).t_fb.to_value(richio.units.tscale)
     duration = args.min_duration_tfb * tfb
     metadata = start_run(args, catalogue, ("histories.h5", "ids.txt"))
     if metadata is None:
@@ -515,7 +580,9 @@ def census(args, executor):
     )
     candidates = presence_intervals(args, catalogue, duration, executor, metadata)
     ids = candidates[0]
-    metadata.update(candidate_intervals=len(ids), candidate_unique_ids=len(np.unique(ids)))
+    metadata.update(
+        candidate_intervals=len(ids), candidate_unique_ids=len(np.unique(ids))
+    )
     print(f"Presence census complete: {len(ids)} candidate intervals", flush=True)
     intervals, offsets = build_census_archive(
         args, catalogue, candidates, duration, tfb, executor, metadata
@@ -523,7 +590,9 @@ def census(args, executor):
 
     unique_ids = np.unique(ids[intervals[:, 0]])
     header = "Every ID with a valid stellar interval lasting at least the requested fallback-time duration"
-    np.savetxt(os.path.join(args.output_dir, "ids.txt"), unique_ids, fmt="%d", header=header)
+    np.savetxt(
+        os.path.join(args.output_dir, "ids.txt"), unique_ids, fmt="%d", header=header
+    )
     metadata.update(
         status="complete",
         elapsed_seconds=time.monotonic() - started,
@@ -547,7 +616,9 @@ def write_histories(output_dir, ids, catalogue, present, data):
         mask = present[:, column]
         np.savetxt(
             os.path.join(output_dir, f"history_{int(particle_id)}.txt"),
-            np.column_stack((snapshots[mask], catalogue.times[mask], data[mask, column])),
+            np.column_stack(
+                (snapshots[mask], catalogue.times[mask], data[mask, column])
+            ),
             header=header,
             fmt=["%d"] + ["%.17g"] * (len(FIELDS) + 1),
         )
@@ -597,7 +668,9 @@ def extract(args, executor):
     metadata.update(
         status="complete",
         elapsed_seconds=time.monotonic() - started,
-        samples_per_id={str(int(value)): int(present[:, i].sum()) for i, value in enumerate(ids)},
+        samples_per_id={
+            str(int(value)): int(present[:, i].sum()) for i, value in enumerate(ids)
+        },
     )
     write_json(os.path.join(args.output_dir, "metadata.json"), metadata)
     print(f"Completed extraction: {len(ids)} IDs; output {args.output_dir}", flush=True)
@@ -605,8 +678,8 @@ def extract(args, executor):
 
 def activity_metrics(times, data, late):
     """Late-activity metrics and their mean percentile ``score`` for histories ``data[time, id]``."""
-    from scipy.stats import rankdata
     import unyt as u
+    from scipy.stats import rankdata
 
     import richio
 
@@ -625,7 +698,8 @@ def activity_metrics(times, data, late):
     log_temperature = np.log10(temperature.to_value("K"))
     late_log_temperature = log_temperature[late]
     reheating = np.max(
-        late_log_temperature - np.minimum.accumulate(late_log_temperature, axis=0), axis=0
+        late_log_temperature - np.minimum.accumulate(late_log_temperature, axis=0),
+        axis=0,
     )
     warm = u.unyt_array(
         (temperature[late] > u.unyt_quantity(1100, "K")).astype(float), "dimensionless"
@@ -672,10 +746,14 @@ def diverse_choice(scores, log_density, log_temperature, shortlist, keep):
     chosen = [int(shortlist[0])]
     distance = np.full(len(scores), np.inf)
     while len(chosen) < min(keep, len(shortlist)):
-        latest = np.sqrt(np.mean((curves - curves[:, chosen[-1], None]) ** 2, axis=(0, 2)))
+        latest = np.sqrt(
+            np.mean((curves - curves[:, chosen[-1], None]) ** 2, axis=(0, 2))
+        )
         distance = np.minimum(distance, latest)
         remaining = shortlist[~np.isin(shortlist, chosen)]
-        utility = 0.7 * scores[remaining] + 0.3 * distance[remaining] / (1 + distance[remaining])
+        utility = 0.7 * scores[remaining] + 0.3 * distance[remaining] / (
+            1 + distance[remaining]
+        )
         chosen.append(int(remaining[np.argmax(utility)]))
     return chosen, scales
 
@@ -694,17 +772,25 @@ def write_selection(args, sources, snapshots, times, late, selected_ids, rows, s
         with open(destination) as stream:
             previous = json.load(stream)
         outputs = ["selected_ids.txt", "candidates_summary.tsv"]
-        outputs += [os.path.join("histories", f"history_{value}.txt") for value in selected_ids]
+        outputs += [
+            os.path.join("histories", f"history_{value}.txt") for value in selected_ids
+        ]
         if previous.get("settings") == settings and all(
             os.path.exists(os.path.join(args.output_dir, name)) for name in outputs
         ):
-            print(f"Matching selection exists in {args.output_dir}; skipping", flush=True)
+            print(
+                f"Matching selection exists in {args.output_dir}; skipping", flush=True
+            )
             return
-        raise FileExistsError(f"Existing selection differs; use --overwrite: {destination}")
+        raise FileExistsError(
+            f"Existing selection differs; use --overwrite: {destination}"
+        )
     os.makedirs(histories_dir, exist_ok=True)
     for value in selected_ids:
         name = f"history_{value}.txt"
-        shutil.copy2(os.path.join(args.input_dir, name), os.path.join(histories_dir, name))
+        shutil.copy2(
+            os.path.join(args.input_dir, name), os.path.join(histories_dir, name)
+        )
     with open(os.path.join(args.output_dir, "selected_ids.txt"), "w") as stream:
         stream.write(
             f"# Complete cell histories: snapshots {snapshots[0]}..{snapshots[-1]}, {len(snapshots)} samples\n"
@@ -712,7 +798,9 @@ def write_selection(args, sources, snapshots, times, late, selected_ids, rows, s
             "# See selection.json for physical filters, scores, and source provenance.\n"
             + "".join(f"{value}\n" for value in selected_ids)
         )
-    with open(os.path.join(args.output_dir, "candidates_summary.tsv"), "w", newline="") as stream:
+    with open(
+        os.path.join(args.output_dir, "candidates_summary.tsv"), "w", newline=""
+    ) as stream:
         writer = csv.DictWriter(stream, fieldnames=rows[0].keys(), delimiter="\t")
         writer.writeheader()
         writer.writerows(rows)
@@ -768,16 +856,30 @@ def selection_summary(masks, eligible, shortlist, scales, selected_rows):
 
 def select(args):
     """Rank complete histories by late thermal activity, then diversify their curves."""
-    sources = [os.path.join(args.input_dir, name) for name in ("metadata.json", "histories.npz")]
+    sources = [
+        os.path.join(args.input_dir, name)
+        for name in ("metadata.json", "histories.npz")
+    ]
     with open(sources[0]) as stream:
         source = json.load(stream)
-    if source["status"] != "complete" or not source["selection_is_every_catalogue_snapshot"]:
-        raise ValueError("Selection requires a completed extraction of every catalogue snapshot")
+    if (
+        source["status"] != "complete"
+        or not source["selection_is_every_catalogue_snapshot"]
+    ):
+        raise ValueError(
+            "Selection requires a completed extraction of every catalogue snapshot"
+        )
     with np.load(sources[1]) as archive:
-        ids, snapshots, times = archive["ids"], archive["snapshots"], archive["time_code"]
+        ids, snapshots, times = (
+            archive["ids"],
+            archive["snapshots"],
+            archive["time_code"],
+        )
         present, values = archive["present"], archive["values"]
 
-    filters = sample_filters(values, args.min_star, args.max_was_removed, args.max_temperature)
+    filters = sample_filters(
+        values, args.min_star, args.max_was_removed, args.max_temperature
+    )
     masks = {"complete": present.all(axis=0)}
     masks |= {name: mask.all(axis=0) for name, mask in filters.items()}
     columns = np.flatnonzero(np.logical_and.reduce(list(masks.values())))
@@ -787,14 +889,19 @@ def select(args):
     if np.count_nonzero(late) < 2:
         raise ValueError("The late-time window needs at least two samples")
 
-    metrics, log_density, log_temperature = activity_metrics(times, values[:, columns], late)
+    metrics, log_density, log_temperature = activity_metrics(
+        times, values[:, columns], late
+    )
     order = np.lexsort((ids[columns], -metrics["score"]))
     shortlist = order[: max(100, args.keep)]
     chosen, scales = diverse_choice(
         metrics["score"], log_density, log_temperature, shortlist, args.keep
     )
     rows = [
-        {"id": int(ids[columns[i]]), **{key: float(value[i]) for key, value in metrics.items()}}
+        {
+            "id": int(ids[columns[i]]),
+            **{key: float(value[i]) for key, value in metrics.items()},
+        }
         for i in order
     ]
     rows_by_id = {row["id"]: row for row in rows}
@@ -802,7 +909,9 @@ def select(args):
     selected_rows = [rows_by_id[value] for value in selected_ids]
     summary = selection_summary(masks, len(columns), shortlist, scales, selected_rows)
     write_selection(args, sources, snapshots, times, late, selected_ids, rows, summary)
-    print(f"Selected {len(selected_ids)} of {len(columns)} eligible histories: {selected_ids}")
+    print(
+        f"Selected {len(selected_ids)} of {len(columns)} eligible histories: {selected_ids}"
+    )
 
 
 def nozzle_row(archive, interval, late_catalogue, times_tfb, r_p, args):
@@ -841,7 +950,9 @@ def nozzle_row(archive, interval, late_catalogue, times_tfb, r_p, args):
         "time_after_last_near_tfb": float(sample_times[-1] - near_times[-1]),
         "min_late_radius_rp": float(np.min(radius[late & np.isfinite(radius)]) / r_p),
         "max_near_temperature_K": float(np.max(values[near, TEMPERATURE])),
-        "max_positive_near_dissipation_code": float(max(0, np.max(values[near, DISSIPATION]))),
+        "max_positive_near_dissipation_code": float(
+            max(0, np.max(values[near, DISSIPATION]))
+        ),
     }
     return row, near_points
 
@@ -874,14 +985,20 @@ def nozzle_candidates(archive, args, tfb, r_p):
     from dev.tde import needs_frame_switch
 
     star_frame = {
-        snapshot_number(path) for path in DATAPATHS(args.run) if needs_frame_switch(args.run, path)
+        snapshot_number(path)
+        for path in DATAPATHS(args.run)
+        if needs_frame_switch(args.run, path)
     }
     times = archive["time_code"][:]
     late_catalogue = times > args.after_tfb * tfb
     if star_frame & set(archive["snapshots"][late_catalogue].tolist()):
-        raise ValueError("The time cut includes star-frame snapshots; increase --after-tfb")
+        raise ValueError(
+            "The time cut includes star-frame snapshots; increase --after-tfb"
+        )
     starts, ends = archive["start_index"][:], archive["end_index"][:]
-    candidates = np.flatnonzero(times[ends] - times[starts] >= args.min_duration_tfb * tfb)
+    candidates = np.flatnonzero(
+        times[ends] - times[starts] >= args.min_duration_tfb * tfb
+    )
     print(
         f"Lifetime cut: {len(candidates):,}/{len(starts):,} intervals >= {args.min_duration_tfb:g} tfb"
     )
@@ -896,26 +1013,39 @@ def nozzle_candidates(archive, args, tfb, r_p):
         "near_points_ge_3": 0,
     }
     for number, interval in enumerate(candidates, 1):
-        row, near_points = nozzle_row(datasets, interval, late_catalogue, times / tfb, r_p, args)
+        row, near_points = nozzle_row(
+            datasets, interval, late_catalogue, times / tfb, r_p, args
+        )
         counts["near_points_ge_2"] += int(near_points >= 2)
         counts["near_points_ge_3"] += int(near_points >= 3)
         if row is not None:
             rows.append(row)
         if number % 10000 == 0:
-            print(f"Inspected {number:,}/{len(candidates):,}; selected {len(rows):,}", flush=True)
+            print(
+                f"Inspected {number:,}/{len(candidates):,}; selected {len(rows):,}",
+                flush=True,
+            )
     counts["selected_intervals"] = len(rows)
     return rows, counts
 
 
 def nozzle(args):
     """Index census intervals with late samples near the nozzle; copies no histories."""
-    from dev.tde import fallback_time, pericenter
+    from dev.tde import tde_basics
+
+    import richio
 
     outputs = ("ids.txt", "catalogue.tsv", "metadata.json")
     if args.output_dir and not args.overwrite:
         if any(os.path.exists(os.path.join(args.output_dir, name)) for name in outputs):
-            raise FileExistsError(f"Existing output requires --overwrite: {args.output_dir}")
-    tfb, r_p = fallback_time(args.run), pericenter(args.run)
+            raise FileExistsError(
+                f"Existing output requires --overwrite: {args.output_dir}"
+            )
+    tde = tde_basics(args.run)
+    tfb, r_p = (
+        tde.t_fb.to_value(richio.units.tscale),
+        tde.r_p.to_value(richio.units.lscale),
+    )
     started = time.monotonic()
     with h5py.File(args.input_file, "r", rdcc_nbytes=32 * 1024**2) as archive:
         rows, counts = nozzle_candidates(archive, args, tfb, r_p)

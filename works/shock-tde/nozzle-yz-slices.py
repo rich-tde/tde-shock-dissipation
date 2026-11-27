@@ -128,7 +128,6 @@ from __future__ import annotations
 
 import math
 import os
-import re
 from dataclasses import dataclass
 
 os.environ.setdefault("MPLBACKEND", "Agg")
@@ -150,10 +149,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import typer
 import unyt as u
-from dev.datapaths import TDE_PARAMETERS, snapshot_number
-from dev.tde import code_gm, fallback_time, pw_orbit_derivatives
+from dev.datapaths import snapshot_number
+from dev.tde import bh_frame_positions, returning_orbit_window, tde_basics
 from richio.plots import scalar_map
-from scipy.integrate import solve_ivp
 
 import richio
 from dev import DATAPATHS, SNAPSHOT_TFB
@@ -167,11 +165,10 @@ REQUESTED_TFBS = {
 }
 
 # Original broad notebook geometry for the 1e4 run, normalized by pericentre.
-REFERENCE_RP_RSUN = 0.47 * (1.0e4 / 0.5) ** (1.0 / 3.0)
+REFERENCE_RP_RSUN = tde_basics("1e4").r_p.to_value(richio.units.lscale)
 SLICE_X_RP = 13.0 / REFERENCE_RP_RSUN
 YZ_WINDOW_RP = tuple(value / REFERENCE_RP_RSUN for value in (-10.0, 10.0, -5.0, 5.0))
 MACH_PROXY_LIMITS = (0.0, 80.0)
-PW_SCHWARZSCHILD_RSUN_1E6 = 4.21
 
 BROAD_FIELDS = (
     ("density", "Density", r"$\log_{10}(\rho/[\mathrm{g\,cm^{-3}}])$", "twilight"),
@@ -225,21 +222,18 @@ DIAGNOSTIC_FIELDS = (
 class RunConfig:
     mode: int
     run: str
-    m_bh: float
-    m_star: float
-    r_star: float
 
     @property
     def r_p(self) -> float:
-        return self.r_star * (self.m_bh / self.m_star) ** (1.0 / 3.0)
+        return tde_basics(self.run).r_p.to_value(richio.units.lscale)
 
     @property
     def t_fb(self) -> float:
-        return fallback_time(self.run)
+        return tde_basics(self.run).t_fb.to_value(richio.units.tscale)
 
 
 RUNS = {
-    mode: RunConfig(mode, run, *TDE_PARAMETERS[run])
+    mode: RunConfig(mode, run)
     for mode, run in enumerate(("1e4", "1e5", "1e6"), start=1)
 }
 
@@ -274,16 +268,6 @@ def selected_snapshots(
     return list(unique.values())
 
 
-def needs_reference_frame(run: str, path: str) -> bool:
-    if run == "1e6":
-        return os.path.basename(os.path.dirname(path)) == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
-
-
-def scalar_time(snapshot):
-    return snapshot.t.reshape(-1)[0] if getattr(snapshot.t, "ndim", 0) else snapshot.t
-
-
 def positive_log10(values) -> np.ndarray:
     values = np.asarray(values, dtype="float64")
     return np.log10(np.where(np.isfinite(values) & (values > 0), values, np.nan))
@@ -293,72 +277,6 @@ def sound_speed(density, pressure, internal_energy):
     """Return ``sqrt(gamma_eff P/rho)`` without assuming a fixed gamma."""
     gamma_eff = 1.0 + pressure / (density * internal_energy)
     return np.sqrt(gamma_eff * pressure / density)
-
-
-def returning_orbit_grid(
-    config: RunConfig,
-    time_tfb: float,
-    box_scale: float,
-    resolution: int,
-    radius_scale: float = 1.0,
-    phase_offset_deg: float = 0.0,
-    center_shift_rsun: float = 0.0,
-    return_s_rsun: bool = False,
-):
-    """Return a uniform-phi grid along the returning PW orbit."""
-    reference_pericenter = config.r_p
-    pericenter = radius_scale * reference_pericenter
-    schwarzschild_radius = PW_SCHWARZSCHILD_RSUN_1E6 * config.m_bh / 1e6
-    gm = code_gm(config.run)
-    energy_spread = gm * config.r_star / reference_pericenter**2
-    binding_energy = -energy_spread * time_tfb ** (-2 / 3)
-    pericenter_speed = np.sqrt(
-        2 * (gm / (pericenter - schwarzschild_radius) + binding_energy)
-    )
-    newtonian_period = 2 * np.pi * gm / (-2 * binding_energy) ** 1.5
-
-    solution = solve_ivp(
-        pw_orbit_derivatives,
-        (0.0, 1.6 * newtonian_period),
-        (pericenter, 0.0, 0.0, -pericenter_speed),
-        args=(gm, schwarzschild_radius),
-        rtol=1e-9,
-        atol=1e-11,
-        dense_output=True,
-        max_step=newtonian_period / 5000,
-    )
-    sample_time = np.linspace(0.0, solution.t[-1], 50000)
-    x, y = solution.sol(sample_time)[:2]
-    radius = np.hypot(x, y)
-    minima = np.where((radius[1:-1] < radius[:-2]) & (radius[1:-1] < radius[2:]))[0] + 1
-    pericenter_index = minima[sample_time[minima] > 0.5 * newtonian_period][0]
-
-    x_rp = x / reference_pericenter
-    y_rp = y / reference_pericenter
-    phi = np.unwrap(np.arctan2(y, x))
-    phi -= phi[pericenter_index]
-    arc = np.concatenate(([0.0], np.cumsum(np.hypot(np.diff(x_rp), np.diff(y_rp)))))
-    half_length = box_scale * (YZ_WINDOW_RP[1] - YZ_WINDOW_RP[0]) / 2
-    arc_limits = arc[pericenter_index] + np.array([-half_length, half_length])
-    phi_limits = np.interp(arc_limits, arc, phi)
-    phase_offset = np.deg2rad(phase_offset_deg)
-    phi_grid = np.linspace(
-        phi_limits[1] + phase_offset,
-        phi_limits[0] + phase_offset,
-        resolution,
-        endpoint=False,
-    )
-    base_arc = np.interp(phi_grid, phi[::-1], arc[::-1])
-    orbit_s_rsun = (
-        -(base_arc - arc[pericenter_index]) * reference_pericenter + center_shift_rsun
-    )
-    shifted_arc = base_arc - center_shift_rsun / reference_pericenter
-    phi_grid = np.interp(shifted_arc, arc, phi)
-    orbit_x_rp = np.interp(phi_grid, phi[::-1], x_rp[::-1])
-    orbit_y_rp = np.interp(phi_grid, phi[::-1], y_rp[::-1])
-    if return_s_rsun:
-        return phi_grid, orbit_x_rp, orbit_y_rp, orbit_s_rsun
-    return phi_grid, orbit_x_rp, orbit_y_rp
 
 
 def orbit_cache_complete(path: str, resolution: int) -> bool:
@@ -393,26 +311,16 @@ def cache_orbit_snapshot(
 ) -> None:
     """Cache a vertical slice whose midline follows the returning PW orbit."""
     snap = richio.load(str(path))
-    time = scalar_time(snap)
+    time = dev.helpers.snapshot_time(snap)
     time_tfb = float(time / config.t_fb)
-    x, y, z = snap.X, snap.Y, snap.Z
-    if needs_reference_frame(config.run, path):
-        offset = dev.reference_frame_offset(
-            t=time,
-            Mbh=config.m_bh * richio.units.mscale,
-            Mstar=config.m_star * richio.units.mscale,
-            Rstar=config.r_star * richio.units.lscale,
-            beta=1,
-        )
-        x = x + offset[0]
-        y = y + offset[1]
+    x, y, z = bh_frame_positions(snap, config.run, path)
 
     r_sun = richio.units.lscale
     r_p = config.r_p * r_sun
-    phi, orbit_x_rp, orbit_y_rp = returning_orbit_grid(
-        config,
+    phi, orbit_x_rp, orbit_y_rp, _ = returning_orbit_window(
+        config.run,
         time_tfb,
-        box_scale,
+        box_scale * (YZ_WINDOW_RP[1] - YZ_WINDOW_RP[0]) / 2,
         resolution,
         radius_scale=radius_scale,
         phase_offset_deg=phase_offset_deg,
@@ -553,18 +461,8 @@ def cache_snapshot(
     box_scale: float = 1.0,
 ) -> None:
     snap = richio.load(str(path))
-    time = scalar_time(snap)
-    x, y, z = snap.X, snap.Y, snap.Z
-    if needs_reference_frame(config.run, path):
-        offset = dev.reference_frame_offset(
-            t=time,
-            Mbh=config.m_bh * richio.units.mscale,
-            Mstar=config.m_star * richio.units.mscale,
-            Rstar=config.r_star * richio.units.lscale,
-            beta=1,
-        )
-        x = x + offset[0]
-        y = y + offset[1]
+    time = dev.helpers.snapshot_time(snap)
+    x, y, z = bh_frame_positions(snap, config.run, path)
 
     r_sun = richio.units.lscale
     r_p = config.r_p * r_sun

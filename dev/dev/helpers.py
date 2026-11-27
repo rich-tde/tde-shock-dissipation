@@ -190,12 +190,13 @@ class TDEBasics:
         self.r_t = Rstar * (Mbh / Mstar) ** (1 / 3)
         self.r_p = self.r_t / beta
         self.r_a = Rstar * (Mbh / Mstar) ** (2 / 3)
-        self.t_fb = (
-            np.pi
-            / np.sqrt(2)
-            * np.sqrt(Rstar**3 / (u.G * Mstar))
-            * np.sqrt(Mbh / Mstar)
-        )
+        self.energy_spread = Mbh * u.G * Rstar / self.r_t**2
+        self.circularization_energy = Mbh * u.G / (4 * self.r_p)
+        self.t_fb = self.orbital_period(-self.energy_spread)
+
+    def orbital_period(self, energy):
+        """Kepler period of a bound orbit with specific orbital ``energy``."""
+        return 2 * np.pi * self.Mbh * u.G / (-2 * energy) ** 1.5
 
 
 ################################################################################
@@ -251,11 +252,19 @@ def reference_frame_offset(t, Mbh, Mstar, Rstar, beta):
     return get_true_anomaly(t, Mbh, Rp)
 
 
+def snapshot_time(snap):
+    """Code time of an HDF5 or extracted NPY snapshot."""
+    import richio
+
+    if isinstance(snap, richio.data.SnapshotNPY):
+        return snap.tfb.to_value(richio.units.tscale) * richio.units.tscale
+    return snap.t.reshape(-1)[0]
+
+
 def positions_and_time(snap):
     """Cell positions and code time for HDF5 or extracted NPY snapshots."""
     import richio
 
     if isinstance(snap, richio.data.SnapshotNPY):
-        time = snap.tfb.to_value(richio.units.tscale) * richio.units.tscale
-        return snap.cm_x, snap.cm_y, snap.cm_z, time
-    return snap.X, snap.Y, snap.Z, snap.t.reshape(-1)[0]
+        return snap.cm_x, snap.cm_y, snap.cm_z, snapshot_time(snap)
+    return snap.X, snap.Y, snap.Z, snapshot_time(snap)

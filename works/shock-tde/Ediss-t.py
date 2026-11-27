@@ -133,7 +133,8 @@ os.environ.setdefault(
     ),
 )
 
-from dev.datapaths import DATADIRS, TDE_PARAMETERS, snapshot_number
+from dev.datapaths import DATADIRS, snapshot_number
+from dev.tde import bh_frame_positions, tde_basics
 
 import dev
 import richio
@@ -151,7 +152,9 @@ class Regions(str, Enum):
 def selected_files(datadirs, stride, start, end, npoints, fallback_time, minimum_tfb):
     paths = []
     for directory in datadirs:
-        full = sorted(glob.glob(os.path.join(directory, "snap_full_*.h5")), key=snapshot_number)
+        full = sorted(
+            glob.glob(os.path.join(directory, "snap_full_*.h5")), key=snapshot_number
+        )
         plain = sorted(
             (
                 p
@@ -161,7 +164,11 @@ def selected_files(datadirs, stride, start, end, npoints, fallback_time, minimum
             key=snapshot_number,
         )
         npy = sorted(
-            (p for p in glob.glob(os.path.join(directory, "snap_*")) if os.path.isdir(p)),
+            (
+                p
+                for p in glob.glob(os.path.join(directory, "snap_*"))
+                if os.path.isdir(p)
+            ),
             key=snapshot_number,
         )
         for path in (full + plain or npy)[::stride]:
@@ -281,17 +288,7 @@ def main(
     if end_snapshot < start_snapshot:
         raise typer.BadParameter("--end-snapshot must be at least --start-snapshot")
     run = {1: "1e4", 2: "1e5", 3: "1e6"}[mode]
-    mbh, mstar, rstar = TDE_PARAMETERS[run]
-    mbh, mstar, rstar = (
-        mbh * richio.units.mscale,
-        mstar * richio.units.mscale,
-        rstar * richio.units.lscale,
-    )
-    r_p = rstar * (mbh / mstar) ** (1 / 3)
-    r_amin = rstar * (mbh / mstar) ** (2 / 3)
-    fallback_time = (
-        np.pi / np.sqrt(2) * np.sqrt(rstar**3 / u.G / mstar) * np.sqrt(mbh / mstar)
-    )
+    tde = tde_basics(run)
     directories = [os.path.normpath(d) for d in data_dir or DATADIRS[run]]
     if output is None:
         suffix = "" if npoints is None else f"-n{npoints}"
@@ -310,7 +307,7 @@ def main(
         start_snapshot,
         end_snapshot,
         npoints,
-        fallback_time,
+        tde.t_fb,
         0.7 if mode == 3 else 0.1,
     )
     if not paths:
@@ -318,9 +315,7 @@ def main(
     output = os.path.normpath(output)
     os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
     # The former nozzle-split tool stored unfinished work in a .partial file.
-    checkpoint = (
-        output if os.path.exists(output) else output + ".partial"
-    )
+    checkpoint = output if os.path.exists(output) else output + ".partial"
     columns = (
         [[] for _ in range(7)] if overwrite else load_checkpoint(checkpoint, regions)
     )
@@ -331,25 +326,19 @@ def main(
             remaining[number] -= 1
             continue
         snap = richio.load(path)
-        x, y, z, time = dev.positions_and_time(snap)
-        tfb = time / fallback_time
-        r_a = r_p if time < 0 else r_amin * tfb ** (2 / 3)
-        needs_switch = (
-            os.path.basename(os.path.dirname(path)) == "TEMPTDE"
-            if os.path.basename(os.path.dirname(path)).startswith("TEMPTDE")
-            else bool(re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)))
-        )
-        if needs_switch:
-            offset = dev.reference_frame_offset(
-                t=time, Mbh=mbh, Mstar=mstar, Rstar=rstar, beta=1
-            )
-            x, y = x + offset[0], y + offset[1]
+        time = dev.snapshot_time(snap)
+        tfb = time / tde.t_fb
+        r_a = tde.r_p if time < 0 else tde.r_a * tfb ** (2 / 3)
+        x, y, z = bh_frame_positions(snap, run, path)
         power = snap.dissipation * snap.volume
         values = (
             number,
             time,
             tfb,
-            *(np.sum(power[mask]) for mask in region_masks(x, y, z, r_p, r_a, regions)),
+            *(
+                np.sum(power[mask])
+                for mask in region_masks(x, y, z, tde.r_p, r_a, regions)
+            ),
         )
         for column, value in zip(columns, values):
             column.append(value)

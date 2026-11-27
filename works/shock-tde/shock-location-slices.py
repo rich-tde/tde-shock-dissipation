@@ -130,9 +130,7 @@ from __future__ import annotations
 import glob
 import math
 import os
-import re
 import tempfile
-from dataclasses import dataclass
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault(
@@ -144,7 +142,6 @@ os.environ.setdefault(
 )
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
-import dev
 
 # Apply the repository plotting style before importing pyplot.
 # isort: split
@@ -152,7 +149,12 @@ import dev
 import matplotlib.pyplot as plt
 import numpy as np
 import typer
-from dev.datapaths import TDE_PARAMETERS
+from dev.tde import (
+    bh_frame_positions,
+    needs_frame_switch,
+    star_frame_offset,
+    tde_basics,
+)
 from matplotlib.colors import LogNorm
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
@@ -162,25 +164,6 @@ RESULT_ROOT = "/home/hey4/rich_tde/data/processed/ShockFinderResults"
 OUTPUT_ROOT = os.path.join(RESULT_ROOT, "analysis", "shock-locations")
 PER_CELL_ROOT = os.path.join(RESULT_ROOT, "analysis", "per-cell")
 DEFAULT_SHOCK_MACH_MIN = 1.8
-
-
-@dataclass(frozen=True)
-class RunConfig:
-    run: str
-    m_bh: float
-    m_star: float
-    r_star: float
-
-    @property
-    def r_p(self) -> float:
-        return self.r_star * (self.m_bh / self.m_star) ** (1 / 3)
-
-    @property
-    def r_a(self) -> float:
-        return self.r_star * (self.m_bh / self.m_star) ** (2 / 3)
-
-
-RUNS = {run: RunConfig(run, *TDE_PARAMETERS[run]) for run in ("1e4", "1e5", "1e6")}
 
 
 def selected_results() -> list[str]:
@@ -197,12 +180,6 @@ MOVIE_WINDOW = (-1.5, 0.5, -0.7, 0.7, -0.7, 0.7)
 MOVIE_WINDOW_OVERRIDES = {
     "1e4": (-2.0, 0.5, -0.875, 0.875, -0.7, 0.7),
 }
-
-
-def needs_reference_frame(run: str, path: str) -> bool:
-    if run == "1e6":
-        return os.path.basename(os.path.dirname(path)) == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
 
 
 def cache_path(run: str, snapnum: int) -> str:
@@ -258,10 +235,11 @@ def shock_histogram_resolution(
 
 
 def movie_window_bounds(
-    config: RunConfig,
+    run: str,
 ) -> tuple[float, float, float, float, float, float]:
-    window = MOVIE_WINDOW_OVERRIDES.get(config.run, MOVIE_WINDOW)
-    r_amin_over_r_p = config.r_a / config.r_p
+    window = MOVIE_WINDOW_OVERRIDES.get(run, MOVIE_WINDOW)
+    tde = tde_basics(run)
+    r_amin_over_r_p = float(tde.r_a / tde.r_p)
     return tuple(value * r_amin_over_r_p for value in window)
 
 
@@ -347,30 +325,18 @@ def build_cache(result_path: str, destination: str, workers: int) -> None:
         is_last = bool(result["is_last"])
         surface_indices = np.asarray(result["surf_idx"], dtype=np.intp)
 
-    config = RUNS[run]
     snap = richio.load(str(snap_path))
-    x, y, z = snap.X, snap.Y, snap.Z
-    if needs_reference_frame(run, snap_path):
-        time = snap.t.reshape(-1)[0] if getattr(snap.t, "ndim", 0) else snap.t
-        offset = dev.reference_frame_offset(
-            t=time,
-            Mbh=config.m_bh * richio.units.mscale,
-            Mstar=config.m_star * richio.units.mscale,
-            Rstar=config.r_star * richio.units.lscale,
-            beta=1,
-        )
-        x = x + offset[0]
-        y = y + offset[1]
+    x, y, z = bh_frame_positions(snap, run, snap_path)
 
-    r_p = config.r_p * richio.units.lscale
-    xmin, xmax, ymin, ymax, zmin, zmax = movie_window_bounds(config)
+    r_p = tde_basics(run).r_p
+    xmin, xmax, ymin, ymax, zmin, zmax = movie_window_bounds(run)
 
     arrays: dict[str, np.ndarray] = {
         "run": np.asarray(run),
         "snapnum": np.asarray(snapnum),
         "time_tfb": np.asarray(time_tfb),
         "is_last": np.asarray(is_last),
-        "r_p_rsun": np.asarray(config.r_p),
+        "r_p_rsun": np.asarray(r_p.to_value(richio.units.lscale)),
         "projection_method": np.asarray("richio.project"),
         "projection_nz": np.asarray(128),
     }
@@ -443,22 +409,15 @@ def filtered_shock_count(
         z = np.asarray(cells["z_Rsun"], dtype="float64")
         snap_path = os.path.normpath(str(cells["snap_path"].item()))
 
-    if needs_reference_frame(run, snap_path):
+    if needs_frame_switch(run, snap_path):
         result_path = os.path.join(
             RESULT_ROOT, run, f"shockfinder_snap_{snapnum:04d}.npz"
         )
         with np.load(result_path) as result:
             time = float(result["time_code"]) * richio.units.tscale
-        config = RUNS[run]
-        offset = dev.reference_frame_offset(
-            t=time,
-            Mbh=config.m_bh * richio.units.mscale,
-            Mstar=config.m_star * richio.units.mscale,
-            Rstar=config.r_star * richio.units.lscale,
-            beta=1,
-        )
-        x += offset[0].to_value("Rsun")
-        y += offset[1].to_value("Rsun")
+        offset_x, offset_y, _, _ = star_frame_offset(run, time)
+        x += offset_x.to_value("Rsun")
+        y += offset_y.to_value("Rsun")
 
     first, second = (x, y) if plane == "xy" else (y, z)
     selected = (

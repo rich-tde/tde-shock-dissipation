@@ -109,6 +109,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import typer
 import unyt as u
+from dev.tde import tde_basics
 
 import richio
 
@@ -122,49 +123,30 @@ REGIONS = (
     ("Outgoing: $-r_a<x<0$, $y<0$", "C2", "--"),
     ("Incoming: $-r_a<x<0$, $y>0$", "C1", ":"),
 )
-CONFIGS = {
-    "1e4": (0.47, 0.5, 1e4, 0.1),
-    "1e5": (0.47, 0.5, 1e5, 0.1),
-    "1e6": (1.0, 1.0, 1e6, 0.7),
-}
-
-
-def physical_scales(label: str):
-    stellar_radius_value, stellar_mass_value, black_hole_mass_value, minimum_tfb = (
-        CONFIGS[label]
-    )
-    stellar_radius = stellar_radius_value * richio.units.lscale
-    stellar_mass = stellar_mass_value * richio.units.mscale
-    black_hole_mass = black_hole_mass_value * richio.units.mscale
-    pericenter_radius = stellar_radius * (black_hole_mass / stellar_mass) ** (1 / 3)
-    fallback_time = (
-        np.pi
-        / np.sqrt(2)
-        * (stellar_radius**3 / u.G / stellar_mass) ** 0.5
-        * (black_hole_mass / stellar_mass) ** 0.5
-    )
-    circularization_energy = (
-        u.G * black_hole_mass / (4 * pericenter_radius) * stellar_mass / 2
-    )
-    return fallback_time, circularization_energy, minimum_tfb
+MINIMUM_TFB = {"1e4": 0.1, "1e5": 0.1, "1e6": 0.7}
 
 
 def load_mode(label: str, data_dir: str, input_pattern: str):
     path = os.path.normpath(os.path.join(data_dir, input_pattern.format(run=label)))
     with open(path) as handle:
         header = handle.readline().lstrip("# ").split()
-    if (
-        header
-        != "SNAPNUM TIME TFALLBACK EDISS_NOZZLE EDISS_STREAM_DISK EDISS_OUTGOING EDISS_INCOMING".split()
-    ):
+    if header != [
+        "SNAPNUM",
+        "TIME",
+        "TFALLBACK",
+        "EDISS_NOZZLE",
+        "EDISS_STREAM_DISK",
+        "EDISS_OUTGOING",
+        "EDISS_INCOMING",
+    ]:
         raise ValueError(f"{path} is not a nozzle-split dissipation table")
     raw = np.loadtxt(path, delimiter="\t", ndmin=2).T
     raw = raw[:, np.argsort(raw[1], kind="stable")]
-    fallback_time, circularization_energy, minimum_tfb = physical_scales(label)
-    raw = raw[:, raw[2] >= minimum_tfb]
+    raw = raw[:, raw[2] >= MINIMUM_TFB[label]]
     times = u.unyt_array(raw[1], TIME_UNIT, registry=richio.units.registry)
     power = u.unyt_array(raw[3:7], POWER_UNIT, registry=richio.units.registry)
-    return raw[2], times, power, fallback_time, circularization_energy
+    tde = tde_basics(label)
+    return raw[2], times, power, tde.t_fb, tde.circularization_energy * tde.Mstar / 2
 
 
 def decorate(axes, ylabel: str, runs):
@@ -269,8 +251,8 @@ def main(
     overwrite: bool = typer.Option(False, help="Replace existing PNG/PDF figures."),
 ):
     """Plot power and cumulative energy from existing nozzle-split tables."""
-    runs = run or list(CONFIGS)
-    if any(label not in CONFIGS for label in runs):
+    runs = run or list(MINIMUM_TFB)
+    if any(label not in MINIMUM_TFB for label in runs):
         raise typer.BadParameter("--run must be 1e4, 1e5 or 1e6")
     data_dir = os.path.normpath(data_dir)
     output_dir = (

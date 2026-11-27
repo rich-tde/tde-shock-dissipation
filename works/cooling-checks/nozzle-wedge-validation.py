@@ -171,12 +171,12 @@ os.environ.setdefault(
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 
-import dev  # isort: skip  # Configure plotting style before importing pyplot.
+import dev  # noqa: F401  # isort: skip  # Configure plotting style before importing pyplot.
 import matplotlib.pyplot as plt
 import numpy as np
 import typer
-import unyt as u
 from dev.datapaths import TDE_PARAMETERS
+from dev.tde import bh_frame_positions
 from loguru import logger
 from richio.plots import scalar_map
 
@@ -207,18 +207,6 @@ def positive_log10(values):
     return np.log10(np.where(np.isfinite(values) & (values > 0), values, np.nan))
 
 
-def needs_reference_frame(run: str, path: str) -> bool:
-    if run == "1e6":
-        return os.path.basename(os.path.dirname(path)) == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
-
-
-def scalar_time(snapshot):
-    time = snapshot.time
-    value = float(np.asarray(time.to_value("code_time")).squeeze())
-    return u.unyt_quantity(value, "code_time", registry=time.units.registry)
-
-
 def direction_cache_complete(path: str) -> bool:
     if not os.path.isfile(path) or os.path.getsize(path) == 0:
         return False
@@ -241,17 +229,8 @@ def build_direction_cache(column_cache: str, destination: str, run: str) -> None
         snapshot_path = os.path.normpath(str(data["snapshot_path"]))
         snapnum = int(data["snapnum"])
     snapshot = richio.load(str(snapshot_path))
-    x, y, z = snapshot.X, snapshot.Y, snapshot.Z
+    x, y, z = bh_frame_positions(snapshot, run, snapshot_path)
     m_bh, m_star, r_star = TDE_PARAMETERS[run]
-    if needs_reference_frame(run, snapshot_path):
-        offset = dev.reference_frame_offset(
-            t=scalar_time(snapshot),
-            Mbh=m_bh * richio.units.mscale,
-            Mstar=m_star * richio.units.mscale,
-            Rstar=r_star * richio.units.lscale,
-            beta=1,
-        )
-        x, y = x + offset[0], y + offset[1]
     r_p = r_star * (m_bh / m_star) ** (1.0 / 3.0) * richio.units.lscale
     radius = np.sqrt(x**2 + y**2 + z**2)
 

@@ -91,7 +91,6 @@ from __future__ import annotations
 
 import math
 import os
-import re
 from dataclasses import dataclass
 
 os.environ.setdefault("MPLBACKEND", "Agg")
@@ -112,7 +111,8 @@ import dev
 import matplotlib.pyplot as plt
 import numpy as np
 import typer
-from dev.datapaths import TDE_PARAMETERS, snapshot_number
+from dev.datapaths import snapshot_number
+from dev.tde import bh_frame_positions, tde_basics
 from richio.plots import scalar_map
 
 import richio
@@ -132,26 +132,10 @@ REQUESTED_TFBS = {
 class RunConfig:
     mode: int
     run: str
-    m_bh: float
-    m_star: float
-    r_star: float
-
-    @property
-    def r_p(self) -> float:
-        return self.r_star * (self.m_bh / self.m_star) ** (1.0 / 3.0)
-
-    @property
-    def t_fb(self) -> float:
-        return (
-            math.pi
-            / math.sqrt(2.0)
-            * math.sqrt(self.r_star**3 / self.m_star)
-            * math.sqrt(self.m_bh / self.m_star)
-        )
 
 
 RUNS = {
-    mode: RunConfig(mode, run, *TDE_PARAMETERS[run])
+    mode: RunConfig(mode, run)
     for mode, run in enumerate(("1e4", "1e5", "1e6"), start=1)
 }
 
@@ -220,17 +204,6 @@ def selected_snapshots(
     return list(unique.values())
 
 
-def needs_reference_frame(run: str, path: str) -> bool:
-    """Match the dataset-specific coordinate switch used by ``E-t.py``."""
-    if run == "1e6":
-        return os.path.basename(os.path.dirname(path)) == "TEMPTDE"
-    return re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
-
-
-def scalar_time(snapshot):
-    return snapshot.t.reshape(-1)[0] if getattr(snapshot.t, "ndim", 0) else snapshot.t
-
-
 def positive_log10(values) -> np.ndarray:
     values = np.asarray(values, dtype="float64")
     return np.log10(np.where(np.isfinite(values) & (values > 0), values, np.nan))
@@ -262,20 +235,11 @@ def cache_snapshot(
     workers: int,
 ) -> None:
     snap = richio.load(str(path))
-    time = scalar_time(snap)
-    x, y, z = snap.X, snap.Y, snap.Z
-    if needs_reference_frame(config.run, path):
-        offset = dev.reference_frame_offset(
-            t=time,
-            Mbh=config.m_bh * richio.units.mscale,
-            Mstar=config.m_star * richio.units.mscale,
-            Rstar=config.r_star * richio.units.lscale,
-            beta=1,
-        )
-        x = x + offset[0]
-        y = y + offset[1]
+    time = dev.helpers.snapshot_time(snap)
+    x, y, z = bh_frame_positions(snap, config.run, path)
 
-    r_p = config.r_p * richio.units.lscale
+    tde = tde_basics(config.run)
+    r_p = tde.r_p
     xmin, xmax, ymin, ymax = WINDOW
     indices, xspace, yspace = snap.to_2dgrid(
         res=(resolution, resolution),
@@ -292,7 +256,7 @@ def cache_snapshot(
     arrays = {
         "x_rp": np.asarray(xspace / r_p, dtype="float64"),
         "y_rp": np.asarray(yspace / r_p, dtype="float64"),
-        "time_tfb": np.asarray(float(time / config.t_fb)),
+        "time_tfb": np.asarray(float(time / tde.t_fb)),
     }
     for output_name, attribute, *_ in FIELDS:
         field = getattr(snap, attribute)[indices].in_cgs()

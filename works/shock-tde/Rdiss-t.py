@@ -94,7 +94,8 @@ os.environ.setdefault(
     ),
 )
 
-import dev
+from dev.tde import bh_frame_positions, tde_basics
+
 import richio
 
 app = typer.Typer(add_completion=False)
@@ -135,9 +136,7 @@ def main(
             "/home/hey4/rich_tde/data/processed/SimpleTimeseries/Rdiss-t-1e4-final.txt"
         )
         NCADENCE = 1
-        Rstar = 0.47 * richio.units.lscale
-        Mstar = 0.5 * richio.units.mscale
-        Mbh = 1e4 * richio.units.mscale
+        run = "1e4"
     elif mode == 2:
         # 1e5
         DATADIRS = (
@@ -147,9 +146,7 @@ def main(
             "/home/hey4/rich_tde/data/processed/SimpleTimeseries/Rdiss-t-1e5-final.txt"
         )
         NCADENCE = 1
-        Rstar = 0.47 * richio.units.lscale
-        Mstar = 0.5 * richio.units.mscale
-        Mbh = 1e5 * richio.units.mscale
+        run = "1e5"
     elif mode == 3:
         # 1e6
         DATADIRS = (
@@ -161,9 +158,7 @@ def main(
             "/home/hey4/rich_tde/data/processed/SimpleTimeseries/Rdiss-t-1e6-final.txt"
         )
         NCADENCE = 1
-        Rstar = 1 * richio.units.lscale
-        Mstar = 1 * richio.units.mscale
-        Mbh = 1e6 * richio.units.mscale
+        run = "ss24"
     else:
         raise ValueError("Invalid mode. Please choose 1, 2, or 3.")
 
@@ -172,14 +167,7 @@ def main(
     os.makedirs(os.path.dirname(OUTPUT_FILE) or ".", exist_ok=True)
     NCADENCE = stride
 
-    r_amin = Rstar * (Mbh / Mstar) ** (2 / 3)
-    tmin = (
-        np.pi
-        / np.sqrt(2)
-        * (Rstar**3 / u.G / Mstar) ** (1 / 2)
-        * (Mbh / Mstar) ** (1 / 2)
-    )
-    r_p = Rstar * (Mbh / Mstar) ** (1 / 3)
+    tde = tde_basics(run)
 
     snapnums = []
     ts = []
@@ -190,17 +178,18 @@ def main(
     Rdisss = []
 
     columns = [snapnums, ts, tfbs, Rdiss_vec_xs, Rdiss_vec_ys, Rdiss_vec_zs, Rdisss]
-    if (
-        not overwrite
-        and os.path.exists(OUTPUT_FILE)
-        and os.path.getsize(OUTPUT_FILE)
-    ):
+    if not overwrite and os.path.exists(OUTPUT_FILE) and os.path.getsize(OUTPUT_FILE):
         with open(OUTPUT_FILE) as handle:
             header = handle.readline().lstrip("# ").split()
-        if (
-            header
-            != "SNAPNUM TIME TFALLBACK RDISSVECX RDISSVECY RDISSVECZ RDISS".split()
-        ):
+        if header != [
+            "SNAPNUM",
+            "TIME",
+            "TFALLBACK",
+            "RDISSVECX",
+            "RDISSVECY",
+            "RDISSVECZ",
+            "RDISS",
+        ]:
             raise ValueError("Existing output has a different time-series schema")
         raw = np.loadtxt(OUTPUT_FILE, ndmin=2)
         if raw.shape[1] != 7:
@@ -257,32 +246,17 @@ def main(
                 t = snap.t[0]
             except IndexError:
                 t = snap.t
-            tfb = t / tmin
+            tfb = t / tde.t_fb
             if t < 0:
-                r_a = r_p
+                r_a = tde.r_p
             else:
-                r_a = r_amin * (tfb) ** (2 / 3)
+                r_a = tde.r_a * (tfb) ** (2 / 3)
 
-            if mode == 3:
-                needs_switch = os.path.basename(dir) == "TEMPTDE"
-            else:
-                needs_switch = bool(
-                    re.fullmatch(r"snap_\d+\.h5", os.path.basename(snap_file))
-                )
-
-            if needs_switch:
-                x0 = dev.reference_frame_offset(
-                    t=t, Mbh=Mbh, Mstar=Mstar, Rstar=Rstar, beta=1
-                )
-                X = snap.X + x0[0]
-                Y = snap.Y + x0[1]
-            else:
-                X = snap.X
-                Y = snap.Y
+            X, Y, Z = bh_frame_positions(snap, run, snap_file)
 
             selection = X > -r_a
 
-            r_vec = u.unyt_array([X, Y, snap.Z])[:, selection]
+            r_vec = u.unyt_array([X, Y, Z])[:, selection]
             r = np.sum(r_vec**2, axis=0) ** 0.5
             r_unit_vec = r_vec / r
 

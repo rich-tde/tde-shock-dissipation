@@ -155,7 +155,8 @@ os.environ.setdefault(
     ),
 )
 
-import dev
+import dev.tde
+
 import richio
 
 app = typer.Typer(add_completion=False)
@@ -279,37 +280,9 @@ def save_timeseries_atomic(path, arrays):
     os.replace(temporary, path)
 
 
-def bh_frame(snapshot, snapshot_path, time):
-    needs_switch = os.path.basename(os.path.dirname(snapshot_path)) == "TEMPTDE"
-    if not needs_switch:
-        return (
-            snapshot.X,
-            snapshot.Y,
-            snapshot.Z,
-            snapshot.vx,
-            snapshot.vy,
-            snapshot.vz,
-        )
-
-    offset = dev.reference_frame_offset(
-        t=time,
-        Mbh=BLACK_HOLE_MASS,
-        Mstar=STELLAR_MASS,
-        Rstar=STELLAR_RADIUS,
-        beta=1,
-    )
-    return (
-        snapshot.X + offset[0],
-        snapshot.Y + offset[1],
-        snapshot.Z,
-        snapshot.vx + offset[2],
-        snapshot.vy + offset[3],
-        snapshot.vz,
-    )
-
-
-def orbital_specific_energy(snapshot, snapshot_path, time):
-    x, y, z, vx, vy, vz = bh_frame(snapshot, snapshot_path, time)
+def orbital_specific_energy(snapshot, snapshot_path):
+    x, y, z = dev.tde.bh_frame_positions(snapshot, "ss24", snapshot_path)
+    vx, vy, vz = dev.tde.bh_frame_velocities(snapshot, "ss24", snapshot_path)
     radius = np.sqrt(x**2 + y**2 + z**2)
     speed_squared = vx**2 + vy**2 + vz**2
 
@@ -558,7 +531,7 @@ def main(
             except IndexError:
                 time = snapshot.t
             time_day = time.to("day")
-            specific_energy = orbital_specific_energy(snapshot, snapshot_path, time)
+            specific_energy = orbital_specific_energy(snapshot, snapshot_path)
             cell_mass = snapshot.density * snapshot.volume
 
             if needs_fallback:

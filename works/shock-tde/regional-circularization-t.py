@@ -131,7 +131,6 @@ Make a compact plot of one regional result::
 """
 
 import os
-import re
 
 import numpy as np
 import typer
@@ -147,9 +146,9 @@ os.environ.setdefault(
     ),
 )
 
+import dev.tde
 from dev.datapaths import DATAPATHS, snapshot_number
 
-import dev
 import richio
 
 app = typer.Typer(add_completion=False)
@@ -227,40 +226,9 @@ def snapshot_time(snapshot):
         return snapshot.t
 
 
-def bh_frame(snapshot, path, time, cfg):
-    plain_snapshot = re.fullmatch(r"snap_\d+\.h5", os.path.basename(path)) is not None
-    needs_switch = os.path.basename(os.path.dirname(path)) == "TEMPTDE" or (
-        cfg["run"] != "1e6" and plain_snapshot
-    )
-    if not needs_switch:
-        return (
-            snapshot.X,
-            snapshot.Y,
-            snapshot.Z,
-            snapshot.vx,
-            snapshot.vy,
-            snapshot.vz,
-        )
-
-    offset = dev.reference_frame_offset(
-        t=time,
-        Mbh=cfg["Mbh"],
-        Mstar=cfg["Mstar"],
-        Rstar=cfg["Rstar"],
-        beta=1,
-    )
-    return (
-        snapshot.X + offset[0],
-        snapshot.Y + offset[1],
-        snapshot.Z,
-        snapshot.vx + offset[2],
-        snapshot.vy + offset[3],
-        snapshot.vz,
-    )
-
-
-def orbital_specific_energy(snapshot, path, time, cfg):
-    x, y, z, vx, vy, vz = bh_frame(snapshot, path, time, cfg)
+def orbital_specific_energy(snapshot, path, cfg):
+    x, y, z = dev.tde.bh_frame_positions(snapshot, cfg["run"], path)
+    vx, vy, vz = dev.tde.bh_frame_velocities(snapshot, cfg["run"], path)
     radius = np.sqrt(x**2 + y**2 + z**2)
     speed_squared = vx**2 + vy**2 + vz**2
 
@@ -391,7 +359,7 @@ def build_fallback_profiles(
         logger.info("Loading {} {} fallback snapshot {}", cfg["run"], epoch, path)
         snapshot = richio.load(path)
         time = snapshot_time(snapshot)
-        specific_energy = orbital_specific_energy(snapshot, path, time, cfg)
+        specific_energy = orbital_specific_energy(snapshot, path, cfg)
         cell_mass = snapshot.density * snapshot.volume
         save_fallback_profile(output, snapnum, time, specific_energy, cell_mass, cfg)
     return paths
@@ -401,7 +369,15 @@ def load_ediss(cfg, ediss_dir=EDISS_DIR):
     path = os.path.normpath(os.path.join(ediss_dir, f"Ediss-t-{cfg['run']}-final.txt"))
     with open(path) as handle:
         header = handle.readline().lstrip("# ").split()
-    if header != "SNAPNUM TIME TFALLBACK EDISS1 EDISS2 EDISS3 EDISS4".split():
+    if header != [
+        "SNAPNUM",
+        "TIME",
+        "TFALLBACK",
+        "EDISS1",
+        "EDISS2",
+        "EDISS3",
+        "EDISS4",
+    ]:
         raise ValueError(f"{path} is not a standard-region Ediss table")
     raw = np.atleast_2d(np.loadtxt(path))
     if raw.shape[1] != 7 or not np.isfinite(raw).all():
@@ -540,7 +516,9 @@ def main(
 ):
     """Normalize existing regional Ediss-t powers by a dynamical fallback rate."""
     cfg = mode_settings(mode)
-    destination = os.path.join(output_root, cfg["run"], f"regional-chi-{cfg['run']}.txt")
+    destination = os.path.join(
+        output_root, cfg["run"], f"regional-chi-{cfg['run']}.txt"
+    )
     if os.path.exists(destination) and not (overwrite or overwrite_fallback):
         logger.info(
             "Existing chi table retained: {}; use --overwrite to replace", destination
